@@ -1,13 +1,8 @@
-import type { ChatMessage, LlmConfig } from "../types/app";
+import type { ChatMessage, LlmApiStyle, LlmConfig } from "../types/app";
 
 type OpenAiMessage = {
   role: "system" | "user" | "assistant";
   content: string;
-};
-
-type ResponsesInputItem = {
-  role: "user" | "assistant" | "system";
-  content: string | Array<{ type: "input_text"; text: string }>;
 };
 
 type OpenAiAssistantMessage = {
@@ -27,7 +22,7 @@ type OpenAiAssistantMessage = {
     | null;
 };
 
-type ChatCompletionResponse = {
+type OpenAiResponseShape = {
   id?: string;
   output_text?: string;
   output?: unknown;
@@ -55,13 +50,40 @@ type ChatCompletionResponse = {
   };
 };
 
-const toEndpoint = (baseUrl: string, config: LlmConfig) => {
-  const trimmed = baseUrl.replace(/\/+$/, "");
-  if (config.provider === "openai") {
-    return `${trimmed}/${config.openaiApiMode === "responses" ? "responses" : "chat/completions"}`;
-  }
-  return `${trimmed}/chat/completions`;
+type ClaudeResponseShape = {
+  type?: string;
+  delta?: {
+    type?: string;
+    text?: string;
+  };
+  content?: Array<{
+    type?: string;
+    text?: string;
+  }>;
+  error?: {
+    message?: string;
+  };
 };
+
+type RequestContext = {
+  config: LlmConfig;
+  recentHistory: OpenAiMessage[];
+  latestUserText: string;
+  streamEnabled: boolean;
+  stop?: string | string[];
+};
+
+type Adapter = {
+  style: LlmApiStyle;
+  endpointSuffix: string;
+  modeLabel: string;
+  buildHeaders: (config: LlmConfig) => Record<string, string>;
+  buildAttemptPayloads: (context: RequestContext) => Record<string, unknown>[];
+  extractNonStreamText: (data: unknown) => string;
+  extractStreamText: (data: unknown) => string;
+  getErrorMessage: (data: unknown) => string;
+};
+
 const MAX_RAW_ERROR_LENGTH = 4000;
 
 const takeRawError = (value: string) => {
@@ -81,7 +103,7 @@ const toDebugSnippet = (data: unknown) => {
     const json = JSON.stringify(data);
     if (!json) return "";
     if (json.length <= 1800) return json;
-    return `${json.slice(0, 1800)}...(响应过长，已截断)`;
+    return `${json.slice(0, 1800)}...(内容过长，已截断)`;
   } catch {
     return "";
   }
@@ -112,18 +134,33 @@ const extractText = (value: unknown): string => {
   return "";
 };
 
-const extractResponsesOutputText = (data: ChatCompletionResponse) => {
-  const root = data as Record<string, unknown>;
-  const output = root.output;
-  const parsedOutput = extractText(output);
-  if (parsedOutput) return parsedOutput;
+const buildStop = (raw: string): string | string[] | undefined => {
+  const normalized = raw
+    .split(/\r?\n|,/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (normalized.length === 0) return undefined;
+  if (normalized.length === 1) return normalized[0];
+  return normalized;
+};
 
-  const responseOutput =
-    root.response && typeof root.response === "object" ? (root.response as Record<string, unknown>).output : undefined;
-  const parsedResponseOutput = extractText(responseOutput);
-  if (parsedResponseOutput) return parsedResponseOutput;
+const withoutStream = (payload: Record<string, unknown>): Record<string, unknown> => {
+  const next = { ...payload };
+  delete next.stream;
+  return next;
+};
 
-  return "";
+const pushUniquePayload = (list: Record<string, unknown>[], payload: Record<string, unknown>) => {
+  const signature = JSON.stringify(payload);
+  const exists = list.some((item) => JSON.stringify(item) === signature);
+  if (!exists) list.push(payload);
+};
+
+const toEndpoint = (baseUrl: string, endpointSuffix: string) => {
+  const trimmedBase = baseUrl.replace(/\/+$/, "");
+  const trimmedSuffix = endpointSuffix.replace(/^\/+/, "");
+  if (!trimmedSuffix) return trimmedBase;
+  return `${trimmedBase}/${trimmedSuffix}`;
 };
 
 const extractToolCallsText = (value: unknown) => {
@@ -144,30 +181,34 @@ const extractToolCallsText = (value: unknown) => {
 const extractMessageExtras = (message: OpenAiAssistantMessage | undefined) => {
   if (!message || typeof message !== "object") return "";
   const record = message as Record<string, unknown>;
-  const candidateValues: unknown[] = [
-    record.reasoning_content,
-    record.refusal,
-    extractToolCallsText(record.tool_calls),
-  ];
-  const merged = candidateValues
+  return [record.reasoning_content, record.refusal, extractToolCallsText(record.tool_calls)]
     .map((item) => extractText(item))
     .filter(Boolean)
     .join("\n")
     .trim();
-  return merged;
 };
 
-const extractReplyTextFromData = (data: ChatCompletionResponse, preferDelta = false) => {
+const extractResponsesOutputText = (data: OpenAiResponseShape) => {
+  const root = data as Record<string, unknown>;
+  const output = root.output;
+  const parsedOutput = extractText(output);
+  if (parsedOutput) return parsedOutput;
+
+  const responseOutput =
+    root.response && typeof root.response === "object" ? (root.response as Record<string, unknown>).output : undefined;
+  const parsedResponseOutput = extractText(responseOutput);
+  if (parsedResponseOutput) return parsedResponseOutput;
+
+  return "";
+};
+
+const extractOpenAiText = (data: OpenAiResponseShape, preferDelta = false) => {
   const firstChoice = data.choices?.[0];
   if (preferDelta) {
-    // In streaming mode, keep delta chunks as-is to preserve spaces/newlines.
-    if (typeof firstChoice?.delta?.content === "string") {
-      return firstChoice.delta.content;
-    }
-    if (typeof data.delta === "string") {
-      return data.delta;
-    }
+    if (typeof firstChoice?.delta?.content === "string") return firstChoice.delta.content;
+    if (typeof data.delta === "string") return data.delta;
   }
+
   const deltaRecord = firstChoice?.delta as Record<string, unknown> | undefined;
   const deltaExtras = deltaRecord
     ? [deltaRecord.reasoning_content, deltaRecord.refusal, extractToolCallsText(deltaRecord.tool_calls)]
@@ -213,29 +254,237 @@ const extractReplyTextFromData = (data: ChatCompletionResponse, preferDelta = fa
   return "";
 };
 
-const readStreamText = async (response: Response, preferResponses = false) => {
+const toResponsesInputMessages = (
+  source: Array<{
+    role: "user" | "assistant" | "system";
+    content: string;
+  }>,
+  structured = false,
+) =>
+  source.map((item) => ({
+    role: item.role,
+    content: structured ? [{ type: "input_text", text: item.content }] : item.content,
+  }));
+
+const toClaudeMessages = (
+  source: Array<{
+    role: "user" | "assistant" | "system";
+    content: string;
+  }>,
+) =>
+  source
+    .filter((item) => item.role !== "system")
+    .map((item) => ({
+      role: item.role === "assistant" ? "assistant" : "user",
+      content: item.content,
+    }));
+
+const openAiAdapter: Adapter = {
+  style: "openai-compatible",
+  endpointSuffix: "chat/completions",
+  modeLabel: "OpenAI Chat Completions",
+  buildHeaders: (config) => ({
+    ...(config.apiKey.trim() ? { Authorization: `Bearer ${config.apiKey.trim()}` } : {}),
+  }),
+  buildAttemptPayloads: (context) => {
+    const { config, recentHistory, latestUserText, streamEnabled, stop } = context;
+    const responsesMode = config.provider === "openai" && config.openaiApiMode === "responses";
+    const systemPrompt = config.systemPrompt.trim();
+    const messages: OpenAiMessage[] = systemPrompt ? [{ role: "system", content: systemPrompt }, ...recentHistory] : recentHistory;
+    const strictMinimalPayload = responsesMode
+      ? {
+          model: config.model.trim(),
+          input: latestUserText,
+          ...(streamEnabled ? { stream: true } : {}),
+        }
+      : {
+          model: config.model.trim(),
+          messages: [{ role: "user", content: latestUserText }],
+          ...(streamEnabled ? { stream: true } : {}),
+        };
+    const compatibleFallbackPayload = responsesMode
+      ? {
+          model: config.model.trim(),
+          input: toResponsesInputMessages(recentHistory),
+          ...(systemPrompt ? { instructions: systemPrompt } : {}),
+          ...(streamEnabled ? { stream: true } : {}),
+        }
+      : {
+          model: config.model.trim(),
+          messages,
+          ...(streamEnabled ? { stream: true } : {}),
+        };
+    const payload = config.minimalCompatibleMode
+      ? { ...compatibleFallbackPayload }
+      : responsesMode
+        ? {
+            model: config.model.trim(),
+            input: toResponsesInputMessages(recentHistory),
+            ...(systemPrompt ? { instructions: systemPrompt } : {}),
+            temperature: config.temperature,
+            top_p: config.topP,
+            max_output_tokens: config.maxCompletionTokens > 0 ? config.maxCompletionTokens : config.maxTokens,
+            stream: streamEnabled,
+          }
+        : {
+            model: config.model.trim(),
+            messages,
+            temperature: config.temperature,
+            top_p: config.topP,
+            n: config.n,
+            ...(stop ? { stop } : {}),
+            presence_penalty: config.presencePenalty,
+            frequency_penalty: config.frequencyPenalty,
+            ...(config.user.trim() ? { user: config.user.trim() } : {}),
+            ...(config.maxCompletionTokens > 0
+              ? { max_completion_tokens: config.maxCompletionTokens }
+              : { max_tokens: config.maxTokens }),
+            stream: streamEnabled,
+          };
+
+    const attemptPayloads: Record<string, unknown>[] = [];
+    pushUniquePayload(attemptPayloads, payload);
+    if (responsesMode) {
+      pushUniquePayload(attemptPayloads, {
+        model: config.model.trim(),
+        input: toResponsesInputMessages([{ role: "user", content: latestUserText }]),
+        ...(streamEnabled ? { stream: true } : {}),
+      });
+      pushUniquePayload(attemptPayloads, {
+        model: config.model.trim(),
+        input: toResponsesInputMessages([{ role: "user", content: latestUserText }], true),
+        ...(streamEnabled ? { stream: true } : {}),
+      });
+    }
+    if (!config.minimalCompatibleMode) {
+      pushUniquePayload(attemptPayloads, compatibleFallbackPayload);
+      pushUniquePayload(attemptPayloads, strictMinimalPayload);
+    }
+    if (streamEnabled) {
+      for (const item of [...attemptPayloads]) {
+        if (Object.prototype.hasOwnProperty.call(item, "stream")) {
+          pushUniquePayload(attemptPayloads, withoutStream(item));
+        }
+      }
+    }
+    return attemptPayloads;
+  },
+  extractNonStreamText: (data) => extractOpenAiText(data as OpenAiResponseShape),
+  extractStreamText: (data) => {
+    const parsed = data as OpenAiResponseShape;
+    if (parsed.type === "response.output_text.delta" && typeof parsed.delta === "string") {
+      return parsed.delta;
+    }
+    return extractOpenAiText(parsed, true);
+  },
+  getErrorMessage: (data) => {
+    const parsed = data as OpenAiResponseShape;
+    return parsed.error?.message?.trim() || "";
+  },
+};
+
+const claudeCodeAdapter: Adapter = {
+  style: "claude-code",
+  endpointSuffix: "messages",
+  modeLabel: "Claude Code Messages",
+  buildHeaders: (config) => ({
+    ...(config.apiKey.trim()
+      ? {
+          Authorization: `Bearer ${config.apiKey.trim()}`,
+          "x-api-key": config.apiKey.trim(),
+        }
+      : {}),
+    "anthropic-version": "2023-06-01",
+  }),
+  buildAttemptPayloads: (context) => {
+    const { config, recentHistory, latestUserText, streamEnabled, stop } = context;
+    const fullMessages = toClaudeMessages(recentHistory);
+    const maxTokens = config.maxCompletionTokens > 0 ? config.maxCompletionTokens : config.maxTokens;
+    const fullPayload: Record<string, unknown> = {
+      model: config.model.trim(),
+      messages: fullMessages.length > 0 ? fullMessages : [{ role: "user", content: latestUserText }],
+      max_tokens: maxTokens,
+      stream: streamEnabled,
+      ...(config.systemPrompt.trim() ? { system: config.systemPrompt.trim() } : {}),
+      ...(config.minimalCompatibleMode
+        ? {}
+        : {
+            temperature: config.temperature,
+            top_p: config.topP,
+            ...(stop ? { stop_sequences: Array.isArray(stop) ? stop : [stop] } : {}),
+          }),
+    };
+    const strictMinimalPayload: Record<string, unknown> = {
+      model: config.model.trim(),
+      messages: [{ role: "user", content: latestUserText }],
+      max_tokens: maxTokens,
+      ...(streamEnabled ? { stream: true } : {}),
+    };
+    const attemptPayloads: Record<string, unknown>[] = [];
+    pushUniquePayload(attemptPayloads, fullPayload);
+    pushUniquePayload(attemptPayloads, strictMinimalPayload);
+    if (streamEnabled) {
+      for (const item of [...attemptPayloads]) {
+        if (Object.prototype.hasOwnProperty.call(item, "stream")) {
+          pushUniquePayload(attemptPayloads, withoutStream(item));
+        }
+      }
+    }
+    return attemptPayloads;
+  },
+  extractNonStreamText: (data) => {
+    const parsed = data as ClaudeResponseShape;
+    const fromContent = extractText(parsed.content);
+    if (fromContent) return fromContent;
+    return extractText(data);
+  },
+  extractStreamText: (data) => {
+    const parsed = data as ClaudeResponseShape;
+    if (parsed.type === "content_block_delta" && parsed.delta?.type === "text_delta") {
+      return parsed.delta.text ?? "";
+    }
+    return "";
+  },
+  getErrorMessage: (data) => {
+    const parsed = data as ClaudeResponseShape;
+    return parsed.error?.message?.trim() || "";
+  },
+};
+
+const ADAPTERS: Record<LlmApiStyle, Adapter> = {
+  "openai-compatible": openAiAdapter,
+  "claude-code": claudeCodeAdapter,
+  custom: openAiAdapter,
+};
+
+const resolveApiStyle = (config: LlmConfig): LlmApiStyle => {
+  if (config.provider === "claudecode") return "claude-code";
+  return config.apiStyle;
+};
+
+const getAdapter = (config: LlmConfig) => ADAPTERS[resolveApiStyle(config)] ?? openAiAdapter;
+
+const readSseText = async (response: Response, adapter: Adapter) => {
   if (!response.body) return "";
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let collected = "";
+
   const consumeLine = (line: string) => {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith(":")) return;
     const payload = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
     if (!payload || payload === "[DONE]") return;
     try {
-      const parsed = JSON.parse(payload) as ChatCompletionResponse;
-      if (preferResponses && parsed.type === "response.output_text.delta" && typeof parsed.delta === "string") {
-        collected += parsed.delta;
-        return;
-      }
-      const piece = extractReplyTextFromData(parsed, true);
+      const parsed = JSON.parse(payload) as unknown;
+      const piece = adapter.extractStreamText(parsed);
       if (piece) collected += piece;
     } catch {
-      // Ignore non-JSON chunks to avoid polluting final visible text.
+      // Ignore non-JSON SSE chunks.
     }
   };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -253,165 +502,81 @@ const readStreamText = async (response: Response, preferResponses = false) => {
   return collected.trim();
 };
 
-const buildStop = (raw: string): string | string[] | undefined => {
-  const normalized = raw
-    .split(/\r?\n|,/g)
+const formatHttpError = (
+  status: number,
+  endpoint: string,
+  activePayload: Record<string, unknown>,
+  adapter: Adapter,
+  data: unknown,
+  rawText: string,
+) => {
+  const details = [adapter.getErrorMessage(data), rawText]
     .map((item) => item.trim())
     .filter(Boolean);
-  if (normalized.length === 0) return undefined;
-  if (normalized.length === 1) return normalized[0];
-  return normalized;
+  const payloadSnippet = toDebugSnippet(activePayload);
+  if (details.length > 0) {
+    return `接口请求失败（HTTP ${status}）\nEndpoint: ${endpoint}\nRequest: ${payloadSnippet || "(空)"}\n\n${details.join("\n\n")}`;
+  }
+  return `接口请求失败（HTTP ${status}）\nEndpoint: ${endpoint}\nRequest: ${payloadSnippet || "(空)"}`;
 };
 
-const withoutStream = (payload: Record<string, unknown>): Record<string, unknown> => {
-  const next = { ...payload };
-  delete next.stream;
-  return next;
+export const getLlmEndpointSuffix = (config: LlmConfig) => {
+  const resolvedStyle = resolveApiStyle(config);
+  const adapter = ADAPTERS[resolvedStyle] ?? openAiAdapter;
+  if (resolvedStyle === "custom") {
+    return "";
+  }
+  if (adapter.style === "openai-compatible" && config.provider === "openai" && config.openaiApiMode === "responses") {
+    return "/responses";
+  }
+  return `/${adapter.endpointSuffix}`;
 };
-
-const pushUniquePayload = (list: Record<string, unknown>[], payload: Record<string, unknown>) => {
-  const signature = JSON.stringify(payload);
-  const exists = list.some((item) => JSON.stringify(item) === signature);
-  if (!exists) list.push(payload);
-};
-
-const toResponsesInputMessages = (
-  source: Array<{
-    role: "user" | "assistant" | "system";
-    content: string;
-  }>,
-  structured = false,
-): ResponsesInputItem[] =>
-  source.map((item) => ({
-    role: item.role,
-    content: structured ? [{ type: "input_text", text: item.content }] : item.content,
-  }));
 
 export async function requestLlmReply(config: LlmConfig, history: ChatMessage[]): Promise<string> {
-  const endpoint = toEndpoint(config.baseUrl.trim(), config);
-  const responsesMode = config.provider === "openai" && config.openaiApiMode === "responses";
-  const streamEnabled = Boolean(config.stream);
+  const adapter = getAdapter(config);
+  const endpoint = toEndpoint(config.baseUrl.trim(), getLlmEndpointSuffix(config));
   const contextMessageLimit = Math.max(1, Math.floor(config.contextTurns || 20)) * 2;
   const recentHistory = history.slice(-contextMessageLimit).map<OpenAiMessage>((item) => ({
     role: item.role,
     content: item.content,
   }));
   const latestUser = [...history].reverse().find((item) => item.role === "user");
-  const messages: OpenAiMessage[] = config.systemPrompt.trim()
-    ? [{ role: "system", content: config.systemPrompt.trim() }, ...recentHistory]
-    : recentHistory;
+  const latestUserText = latestUser?.content ?? history[history.length - 1]?.content ?? "";
+  const stop = buildStop(config.stop);
+  const attemptPayloads = adapter.buildAttemptPayloads({
+    config,
+    recentHistory,
+    latestUserText,
+    streamEnabled: Boolean(config.stream),
+    stop,
+  });
 
   try {
-    const stop = buildStop(config.stop);
-    const latestUserText = latestUser?.content ?? history[history.length - 1]?.content ?? "";
-    const strictMinimalPayload = responsesMode
-      ? {
-          model: config.model.trim(),
-          input: latestUserText,
-          ...(streamEnabled ? { stream: true } : {}),
-        }
-      : {
-          model: config.model.trim(),
-          messages: [{ role: "user", content: latestUserText }],
-          ...(streamEnabled ? { stream: true } : {}),
-        };
-    const compatibleFallbackPayload = responsesMode
-      ? {
-          model: config.model.trim(),
-          input: toResponsesInputMessages(recentHistory),
-          ...(config.systemPrompt.trim() ? { instructions: config.systemPrompt.trim() } : {}),
-          ...(streamEnabled ? { stream: true } : {}),
-        }
-      : {
-          model: config.model.trim(),
-          messages,
-          ...(streamEnabled ? { stream: true } : {}),
-        };
-    const payload = config.minimalCompatibleMode
-      ? {
-          ...compatibleFallbackPayload,
-        }
-      : responsesMode
-        ? {
-            model: config.model.trim(),
-            input: toResponsesInputMessages(recentHistory),
-            ...(config.systemPrompt.trim() ? { instructions: config.systemPrompt.trim() } : {}),
-            temperature: config.temperature,
-            top_p: config.topP,
-            max_output_tokens: config.maxCompletionTokens > 0 ? config.maxCompletionTokens : config.maxTokens,
-            stream: streamEnabled,
-          }
-      : {
-          model: config.model.trim(),
-          messages,
-          temperature: config.temperature,
-          top_p: config.topP,
-          n: config.n,
-          ...(stop ? { stop } : {}),
-          presence_penalty: config.presencePenalty,
-          frequency_penalty: config.frequencyPenalty,
-          ...(config.user.trim() ? { user: config.user.trim() } : {}),
-          ...(config.maxCompletionTokens > 0 ? { max_completion_tokens: config.maxCompletionTokens } : { max_tokens: config.maxTokens }),
-          stream: streamEnabled,
-        };
-
     const sendOnce = async (bodyPayload: Record<string, unknown>) => {
       const requestStream = bodyPayload.stream === true;
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
-          Accept: "application/json",
+          Accept: "application/json, text/event-stream",
           "Content-Type": "application/json",
-          ...(config.apiKey.trim() ? { Authorization: `Bearer ${config.apiKey.trim()}` } : {}),
+          ...adapter.buildHeaders(config),
         },
         body: JSON.stringify(bodyPayload),
       });
       const jsonClone = response.clone();
       const rawClone = response.clone();
-      const streamText = requestStream && response.ok ? await readStreamText(response, responsesMode) : "";
-      const data = (await jsonClone.json().catch(() => ({}))) as ChatCompletionResponse;
+      const streamText = requestStream && response.ok ? await readSseText(response, adapter) : "";
+      const data = (await jsonClone.json().catch(() => ({}))) as unknown;
       const rawText = takeRawError(await rawClone.text().catch(() => ""));
       return { response, data, rawText, streamText };
     };
 
-    const attemptPayloads: Record<string, unknown>[] = [];
-    pushUniquePayload(attemptPayloads, payload);
-    if (responsesMode) {
-      // Some OpenAI-compatible gateways only accept message-array input for /responses.
-      pushUniquePayload(attemptPayloads, {
-        model: config.model.trim(),
-        input: toResponsesInputMessages([{ role: "user", content: latestUserText }]),
-        ...(streamEnabled ? { stream: true } : {}),
-      });
-      // Some gateways require structured content blocks in /responses.
-      pushUniquePayload(attemptPayloads, {
-        model: config.model.trim(),
-        input: toResponsesInputMessages([{ role: "user", content: latestUserText }], true),
-        ...(streamEnabled ? { stream: true } : {}),
-      });
-    }
-    if (!config.minimalCompatibleMode) {
-      // Keep context in fallback payload so gateways that reject advanced params still receive conversation history.
-      pushUniquePayload(attemptPayloads, compatibleFallbackPayload);
-      // Last resort: strictly minimal payload (single user message).
-      pushUniquePayload(attemptPayloads, strictMinimalPayload);
-    } else {
-      // In minimal-compatible mode, keep context stable and avoid dropping to single-message fallback.
-      pushUniquePayload(attemptPayloads, compatibleFallbackPayload);
-    }
-    if (streamEnabled) {
-      for (const item of [...attemptPayloads]) {
-        if (Object.prototype.hasOwnProperty.call(item, "stream")) {
-          pushUniquePayload(attemptPayloads, withoutStream(item));
-        }
-      }
-    }
-
-    let activePayload: Record<string, unknown> = attemptPayloads[0];
+    let activePayload: Record<string, unknown> = attemptPayloads[0] ?? {};
     let response: Response | null = null;
-    let data: ChatCompletionResponse = {};
+    let data: unknown = {};
     let rawText = "";
     let streamText = "";
+
     for (const attempt of attemptPayloads) {
       activePayload = attempt;
       const result = await sendOnce(attempt);
@@ -425,29 +590,16 @@ export async function requestLlmReply(config: LlmConfig, history: ChatMessage[])
     if (!response) {
       throw new Error("请求失败，请检查网络或配置。");
     }
-
     if (!response.ok) {
-      const details = [data.error?.message, rawText]
-        .map((item) => (typeof item === "string" ? item.trim() : ""))
-        .filter(Boolean);
-      const payloadSnippet = toDebugSnippet(activePayload);
-      throw new Error(
-        details.length
-          ? `接口请求失败（HTTP ${response.status}）\nEndpoint: ${endpoint}\nRequest: ${payloadSnippet || "(空)"}\n\n${details.join("\n\n")}`
-          : `接口请求失败（HTTP ${response.status}）\nEndpoint: ${endpoint}\nRequest: ${payloadSnippet || "(空)"}`,
-      );
+      throw new Error(formatHttpError(response.status, endpoint, activePayload, adapter, data, rawText));
     }
     if (streamText) return streamText;
-    const firstChoice = data.choices?.[0];
-    const parsedText = extractReplyTextFromData(data);
+
+    const parsedText = adapter.extractNonStreamText(data);
     if (parsedText) return parsedText;
-    if (firstChoice?.message?.content === null) {
-      throw new Error(
-        `模型返回了空文本内容（message.content 为 null）。\n可能是网关未把结果映射到 content 字段。\n\n响应片段：\n${toDebugSnippet(data) || "(空响应)"}`,
-      );
-    }
+
     throw new Error(
-      `模型返回内容无法解析。\n请检查接口是否兼容当前模式（${responsesMode ? "OpenAI Responses" : "OpenAI Chat Completions"}）。\n\n响应片段：\n${toDebugSnippet(data) || "(空响应)"}`,
+      `模型返回内容无法解析。\n请检查接口是否兼容当前模式（${adapter.modeLabel}）。\n\n响应片段：\n${toDebugSnippet(data) || "(空响应)"}`,
     );
   } catch (error) {
     throw new Error(normalizeError(error));

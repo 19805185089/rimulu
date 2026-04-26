@@ -7,6 +7,7 @@
 - 史莱姆本体主窗口（透明、置顶、无边框）
 - 聊天与备忘录子窗口（Tauri 子窗口）
 - LLM 聊天（支持流式返回、上下文轮数控制）
+- LLM 可插拔接口适配（OpenAI Compatible / ClaudeCode Messages / 自定义直连）
 - 聊天消息 Markdown 渲染（`react-markdown + remark-gfm`）
 - 每条消息可复制、代码块可复制、聊天记录可复制
 - 吞噬区开关与交互修复
@@ -20,10 +21,23 @@
 - 启用聊天：开启
 - 最小兼容模式：开启
 - Provider：`OpenAI`
+- 接口形态：`openai-compatible`
 - Base URL：`https://it-ai.fineres.com/v1`
 - Model：`gpt-5.3-codex`
 - API Key：默认空
 - 上下文轮数：`20`
+- 系统提示词：`你是利姆露桌面助手，在回答时，请在符合你史莱姆人设的情况下，用简洁，明确，友好的中文回复。`
+
+## LLM 配置说明
+
+- 服务商支持：`OpenAI`、`ClaudeCode`、`自定义兼容`
+- 仅当服务商为 `自定义兼容` 时显示“接口形态”
+- 接口形态支持：`openai-compatible`、`claude-code`、`custom`
+- 当接口形态为 `custom` 时，`Base URL` 可编辑，并按“完整 URL”直连（不自动追加后缀）
+- 非 `custom` 形态下，`Base URL` 只读，系统自动拼接后缀：
+  - `openai-compatible` -> `/chat/completions`
+  - `claude-code` -> `/messages`
+- 最小兼容模式开启时仅发送基础入参（例如 `model/messages`），细节参数（如 `temperature/top_p/penalty/stop`）会被忽略
 
 ## 环境要求
 

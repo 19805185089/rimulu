@@ -2,6 +2,7 @@ import type { CSSProperties, RefObject } from "react";
 import { CircleHelp, X } from "lucide-react";
 import { MEMO_BOOST } from "../constants/app";
 import type { LlmConfig } from "../types/app";
+import { getLlmEndpointSuffix } from "../utils/llm";
 
 type Props = {
   open: boolean;
@@ -27,7 +28,10 @@ export default function SettingsPanel({
   onClose,
 }: Props) {
   if (!open) return null;
-  const endpointSuffix = "/chat/completions";
+  const endpointSuffix = getLlmEndpointSuffix(llmConfig);
+  const isClaudeCodeProvider = llmConfig.provider === "claudecode";
+  const isCustomProvider = llmConfig.provider === "custom";
+  const isCustomApiStyle = llmConfig.apiStyle === "custom";
 
   return (
     <aside
@@ -130,12 +134,33 @@ export default function SettingsPanel({
               <select
                 className="settings-input"
                 value={llmConfig.provider}
-                onChange={(event) => onUpdateLlmConfig({ provider: event.target.value as LlmConfig["provider"] })}
+                onChange={(event) => {
+                  const nextProvider = event.target.value as LlmConfig["provider"];
+                  onUpdateLlmConfig({
+                    provider: nextProvider,
+                    apiStyle: nextProvider === "claudecode" ? "claude-code" : "openai-compatible",
+                  });
+                }}
               >
                 <option value="openai">OpenAI</option>
+                <option value="claudecode">ClaudeCode</option>
                 <option value="custom">自定义兼容</option>
               </select>
             </label>
+            {isCustomProvider && (
+              <label className="settings-field">
+                <span className="settings-field-label">接口形态</span>
+                <select
+                  className="settings-input"
+                  value={llmConfig.apiStyle}
+                  onChange={(event) => onUpdateLlmConfig({ apiStyle: event.target.value as LlmConfig["apiStyle"] })}
+                >
+                  <option value="openai-compatible">OpenAI Compatible</option>
+                  <option value="claude-code">ClaudeCode 风格（预留）</option>
+                  <option value="custom">自定义</option>
+                </select>
+              </label>
+            )}
             <label className="settings-field">
               <span className="settings-field-label">Base URL</span>
               <div className="settings-base-url-group">
@@ -143,12 +168,21 @@ export default function SettingsPanel({
                   className="settings-input"
                   type="text"
                   value={llmConfig.baseUrl}
-                  placeholder="例如：https://api.openai.com/v1"
+                  placeholder={
+                    isCustomApiStyle
+                      ? "例如：https://your-gateway.example.com/v1/chat/completions"
+                      : isClaudeCodeProvider
+                        ? "例如：https://www.newapi.ai/v1"
+                        : "例如：https://api.openai.com/v1"
+                  }
+                  disabled={!isCustomApiStyle}
                   onChange={(event) => onUpdateLlmConfig({ baseUrl: event.target.value })}
                 />
-                <span className="settings-endpoint-suffix" title={endpointSuffix}>
-                  {endpointSuffix}
-                </span>
+                {endpointSuffix ? (
+                  <span className="settings-endpoint-suffix" title={endpointSuffix}>
+                    {endpointSuffix}
+                  </span>
+                ) : null}
               </div>
             </label>
             <label className="settings-field">

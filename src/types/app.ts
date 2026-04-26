@@ -28,14 +28,16 @@ export type ChatMessage = {
   createdAt: number;
 };
 
-export type LlmProvider = "openai" | "custom";
+export type LlmProvider = "openai" | "custom" | "claudecode";
 export type OpenAiApiMode = "chat" | "responses";
+export type LlmApiStyle = "openai-compatible" | "claude-code" | "custom";
 
 export type LlmConfig = {
   enabled: boolean;
   minimalCompatibleMode: boolean;
   contextTurns: number;
   stream: boolean;
+  apiStyle: LlmApiStyle;
   provider: LlmProvider;
   openaiApiMode: OpenAiApiMode;
   baseUrl: string;

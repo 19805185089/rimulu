@@ -6,12 +6,13 @@ export const DEFAULT_LLM_CONFIG: LlmConfig = {
   minimalCompatibleMode: true,
   contextTurns: 20,
   stream: true,
+  apiStyle: "openai-compatible",
   provider: "openai",
   openaiApiMode: "chat",
   baseUrl: "https://it-ai.fineres.com/v1",
   apiKey: "",
   model: "gpt-5.3-codex",
-  systemPrompt: "你是利姆露桌面助手，请用简洁、友好、实用的中文回复。",
+  systemPrompt: "你是利姆露桌面助手，在回答时，请在符合你史莱姆人设的情况下，用简洁，明确，友好的中文回复。",
   temperature: 0.7,
   topP: 1,
   n: 1,
@@ -35,12 +36,25 @@ export function normalizeLlmConfig(config: Partial<LlmConfig> | undefined): LlmC
     ...DEFAULT_LLM_CONFIG,
     ...(config ?? {}),
   };
+  const normalizedProvider = merged.provider === "openai" || merged.provider === "custom" || merged.provider === "claudecode"
+    ? merged.provider
+    : "custom";
+  const normalizedApiStyle =
+    normalizedProvider === "claudecode"
+      ? "claude-code"
+      : merged.apiStyle === "custom"
+        ? "custom"
+      : merged.apiStyle === "claude-code"
+        ? "claude-code"
+        : "openai-compatible";
+
   return {
     enabled: Boolean(merged.enabled),
     minimalCompatibleMode: Boolean(merged.minimalCompatibleMode),
     contextTurns: clamp(Number.isFinite(merged.contextTurns) ? Math.floor(merged.contextTurns) : DEFAULT_LLM_CONFIG.contextTurns, 1, 50),
     stream: Boolean(merged.stream),
-    provider: merged.provider === "openai" || merged.provider === "custom" ? merged.provider : "custom",
+    apiStyle: normalizedApiStyle,
+    provider: normalizedProvider,
     openaiApiMode: "chat",
     baseUrl: (merged.baseUrl || "").trim(),
     apiKey: merged.apiKey || "",

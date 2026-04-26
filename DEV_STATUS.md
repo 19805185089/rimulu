@@ -74,6 +74,13 @@
 
 ## 后续更新日志
 
+### 2026-04-26
+- LLM 架构重构：将原先单体 `requestLlmReply` 逻辑升级为“接口形态适配器”结构，抽离 endpoint、headers、payload 构造、SSE 增量解析与错误提取，降低后续新增协议的改动面。
+- 能力扩展：新增 `apiStyle` 配置（`openai-compatible` / `claude-code`），默认保持 OpenAI 兼容链路不变，并预置 ClaudeCode 风格适配器骨架（`/messages`、`x-api-key`、Anthropic SSE 文本增量解析）。
+- 设置面板扩展：新增“接口形态”选择项，`Base URL` 后缀展示改为随当前形态动态切换（如 `/chat/completions`、`/responses`、`/messages`），便于后续联调不同网关。
+- 设置面板增强：服务商下拉新增 `ClaudeCode` 选项，选择后自动联动到 Claude Messages 形态；请求头补充 `anthropic-version: 2023-06-01`，并兼容 `Authorization: Bearer` 与 `x-api-key` 鉴权；基础入参与细节参数对齐 `messages/system/max_tokens/temperature/top_p/stream/stop_sequences`。
+- 设置面板交互调整：`自定义兼容` 服务商下新增“接口形态=自定义”，仅在该形态下允许编辑 URL；非自定义形态下 URL 输入框只读并继续按形态自动拼接后缀，自定义形态改为直连用户填写的完整请求地址（不再追加后缀）。
+
 ### 2026-04-24
 - 初始化开发同步文档，沉淀当前项目功能基线。
 - 后续所有开发进展（功能、BUG、重构）在此追加。
