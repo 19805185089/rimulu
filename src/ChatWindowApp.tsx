@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import ChatPanel from "./components/ChatPanel";
 import { INTERACTIVE_HIT_PADDING, SETTINGS_STORAGE_KEY } from "./constants/app";
-import { getStyleProfile } from "./styles/profiles";
+import { getStyleProfile, normalizeStyleId } from "./styles/profiles";
 import { applyStyleTokensToRoot } from "./styles/theme";
-import { loadAppSettings } from "./utils/settings";
+import { loadAppSettings, normalizeLlmConfig, resolveSystemPromptForStyle } from "./utils/settings";
 import { requestLlmReply } from "./utils/llm";
 import type { ChatMessage } from "./types/app";
 import "./App.css";
@@ -34,8 +34,15 @@ export default function ChatWindowApp() {
   const [chatInput, setChatInput] = useState("");
   const [chatSending, setChatSending] = useState(false);
   const [draggingWindow, setDraggingWindow] = useState(false);
-  const [llmConfig, setLlmConfig] = useState(() => loadAppSettings().llm);
-  const [styleId, setStyleId] = useState(() => getStyleIdFromQuery() ?? loadAppSettings().styleId);
+  const [styleId, setStyleId] = useState(() => normalizeStyleId(getStyleIdFromQuery() ?? loadAppSettings().styleId));
+  const [llmConfig, setLlmConfig] = useState(() => {
+    const settings = loadAppSettings();
+    const initialStyleId = normalizeStyleId(getStyleIdFromQuery() ?? settings.styleId);
+    return normalizeLlmConfig({
+      ...settings.llm,
+      systemPrompt: resolveSystemPromptForStyle(initialStyleId, settings.stylePrompts),
+    });
+  });
   const activeStyle = useMemo(() => getStyleProfile(styleId), [styleId]);
   const panelPosition = useMemo(() => {
     if (typeof window === "undefined") return { x: 390, y: 460 };
@@ -48,13 +55,14 @@ export default function ChatWindowApp() {
   }, []);
 
   useEffect(() => {
-    const syncSettings = () => {
+    const syncSettings = (targetStyleId = styleId) => {
+      const normalizedTargetStyleId = normalizeStyleId(targetStyleId);
       const settings = loadAppSettings();
-      setLlmConfig((prev) => {
-        const prevText = JSON.stringify(prev);
-        const nextText = JSON.stringify(settings.llm);
-        return prevText === nextText ? prev : settings.llm;
+      const nextLlmConfig = normalizeLlmConfig({
+        ...settings.llm,
+        systemPrompt: resolveSystemPromptForStyle(normalizedTargetStyleId, settings.stylePrompts),
       });
+      setLlmConfig((prev) => (JSON.stringify(prev) === JSON.stringify(nextLlmConfig) ? prev : nextLlmConfig));
     };
     const handleStorage = (event: StorageEvent) => {
       if (event.key && event.key !== SETTINGS_STORAGE_KEY) return;
@@ -65,17 +73,20 @@ export default function ChatWindowApp() {
         syncSettings();
       }
     };
+    const handleFocus = () => {
+      syncSettings();
+    };
     const timer = window.setInterval(syncSettings, 700);
     window.addEventListener("storage", handleStorage);
-    window.addEventListener("focus", syncSettings);
+    window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("storage", handleStorage);
-      window.removeEventListener("focus", syncSettings);
+      window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, []);
+  }, [styleId]);
 
   useEffect(() => {
     applyStyleTokensToRoot(activeStyle.tokens);
@@ -90,7 +101,16 @@ export default function ChatWindowApp() {
         if (cancelled) return;
         const nextStyleId = event.payload?.styleId;
         if (!nextStyleId) return;
-        setStyleId((prev) => (prev === nextStyleId ? prev : nextStyleId));
+        const normalizedNextStyleId = normalizeStyleId(nextStyleId);
+        setStyleId((prev) => (prev === normalizedNextStyleId ? prev : normalizedNextStyleId));
+        const settings = loadAppSettings();
+        setLlmConfig((prev) => {
+          const nextLlmConfig = normalizeLlmConfig({
+            ...settings.llm,
+            systemPrompt: resolveSystemPromptForStyle(normalizedNextStyleId, settings.stylePrompts),
+          });
+          return JSON.stringify(prev) === JSON.stringify(nextLlmConfig) ? prev : nextLlmConfig;
+        });
       });
     };
 

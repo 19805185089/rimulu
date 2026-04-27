@@ -36,8 +36,8 @@ import {
   loadProgress,
 } from "./utils/progress";
 import { requestLlmReply } from "./utils/llm";
-import { loadAppSettings, normalizeLlmConfig } from "./utils/settings";
-import { getStyleProfile, STYLE_PROFILES } from "./styles/profiles";
+import { loadAppSettings, normalizeLlmConfig, resolveSystemPromptForStyle } from "./utils/settings";
+import { getStyleProfile, normalizeStyleId, STYLE_PROFILES } from "./styles/profiles";
 import { applyStyleTokensToRoot } from "./styles/theme";
 import { playSlimeClickSound } from "./utils/sound";
 import type { ChatMessage, LlmConfig, MemoItem, PetState, ProgressState, SkillEffectType } from "./types/app";
@@ -158,6 +158,7 @@ function App() {
   const [chatSending, setChatSending] = useState(false);
   const [swallowEnabled, setSwallowEnabled] = useState(initialSettingsRef.current.swallowEnabled);
   const [styleId, setStyleId] = useState(initialSettingsRef.current.styleId);
+  const [stylePrompts, setStylePrompts] = useState<Record<string, string>>(initialSettingsRef.current.stylePrompts);
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(initialSettingsRef.current.llm);
   const [draggedPaths, setDraggedPaths] = useState<string[]>([]);
   const [isSwallowHot, setIsSwallowHot] = useState(false);
@@ -311,6 +312,7 @@ function App() {
           JSON.stringify({
             swallowEnabled,
             styleId,
+            stylePrompts,
             llm: normalizeLlmConfig(llmConfig),
           }),
         );
@@ -319,7 +321,7 @@ function App() {
       }
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [swallowEnabled, styleId, llmConfig]);
+  }, [swallowEnabled, styleId, stylePrompts, llmConfig]);
 
   useEffect(() => {
     applyStyleTokensToRoot(activeStyle.tokens);
@@ -1422,31 +1424,46 @@ function App() {
       }))}
       styleId={styleId}
       onStyleChange={(nextStyleId: string) => {
-        const currentStyle = getStyleProfile(styleId);
+        const normalizedCurrentStyleId = normalizeStyleId(styleId);
+        const normalizedNextStyleId = normalizeStyleId(nextStyleId);
         const nextStyle = getStyleProfile(nextStyleId);
-        setStyleId(nextStyleId);
+        setStylePrompts((prev) => {
+          if (prev[normalizedCurrentStyleId] === llmConfig.systemPrompt) return prev;
+          return {
+            ...prev,
+            [normalizedCurrentStyleId]: llmConfig.systemPrompt,
+          };
+        });
+        setStyleId(normalizedNextStyleId);
         void (async () => {
           try {
             const chatWindow = await WebviewWindow.getByLabel(CHAT_CHILD_WINDOW_LABEL);
             if (!chatWindow) return;
-            await appWindow.emitTo(CHAT_CHILD_WINDOW_LABEL, "limulu:style-changed", { styleId: nextStyleId });
+            await appWindow.emitTo(CHAT_CHILD_WINDOW_LABEL, "limulu:style-changed", { styleId: normalizedNextStyleId });
             await chatWindow.setTitle(`${nextStyle.assistantName}聊天`);
           } catch {
             // Ignore if child window is not running or temporarily unavailable.
           }
         })();
-        setLlmConfig((prev) => {
-          const canReplacePrompt =
-            !prev.systemPrompt.trim() || prev.systemPrompt.trim() === currentStyle.defaultSystemPrompt.trim();
-          if (!canReplacePrompt) return prev;
-          return normalizeLlmConfig({
+        setLlmConfig((prev) =>
+          normalizeLlmConfig({
             ...prev,
-            systemPrompt: nextStyle.defaultSystemPrompt,
-          });
-        });
+            systemPrompt: resolveSystemPromptForStyle(normalizedNextStyleId, stylePrompts),
+          }),
+        );
       }}
       llmConfig={llmConfig}
-      onUpdateLlmConfig={(patch) => setLlmConfig((prev) => normalizeLlmConfig({ ...prev, ...patch }))}
+      onUpdateLlmConfig={(patch) => {
+        if (typeof patch.systemPrompt === "string") {
+          const nextSystemPrompt = patch.systemPrompt;
+          const normalizedCurrentStyleId = normalizeStyleId(styleId);
+          setStylePrompts((prev) => ({
+            ...prev,
+            [normalizedCurrentStyleId]: nextSystemPrompt,
+          }));
+        }
+        setLlmConfig((prev) => normalizeLlmConfig({ ...prev, ...patch }));
+      }}
       onClose={() => {
         setSettingsPanelOpen(false);
         setLastAction("关闭设置面板");

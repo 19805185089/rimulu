@@ -1,6 +1,14 @@
 import { SETTINGS_STORAGE_KEY } from "../constants/app";
-import { DEFAULT_STYLE_ID, getStyleProfile, normalizeStyleId } from "../styles/profiles";
+import { DEFAULT_STYLE_ID, STYLE_PROFILES, getStyleProfile, normalizeStyleId } from "../styles/profiles";
 import type { AppSettings, LlmConfig } from "../types/app";
+
+const getDefaultStylePrompts = (): Record<string, string> =>
+  STYLE_PROFILES.reduce<Record<string, string>>((acc, profile) => {
+    acc[profile.id] = profile.defaultSystemPrompt;
+    return acc;
+  }, {});
+
+const DEFAULT_STYLE_PROMPTS = getDefaultStylePrompts();
 
 export const DEFAULT_LLM_CONFIG: LlmConfig = {
   enabled: true,
@@ -29,6 +37,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   swallowEnabled: true,
   styleId: DEFAULT_STYLE_ID,
   llm: DEFAULT_LLM_CONFIG,
+  stylePrompts: DEFAULT_STYLE_PROMPTS,
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
@@ -86,16 +95,60 @@ export function normalizeLlmConfig(config: Partial<LlmConfig> | undefined): LlmC
   };
 }
 
+export function normalizeStylePrompts(
+  rawStylePrompts: unknown,
+  fallbackStyleId: string,
+  fallbackPrompt: string,
+): Record<string, string> {
+  const normalizedFallbackStyleId = normalizeStyleId(fallbackStyleId);
+  const fallbackStylePrompt = fallbackPrompt || getStyleProfile(normalizedFallbackStyleId).defaultSystemPrompt;
+  const nextStylePrompts: Record<string, string> = {
+    ...DEFAULT_STYLE_PROMPTS,
+    [normalizedFallbackStyleId]: fallbackStylePrompt,
+  };
+
+  if (!rawStylePrompts || typeof rawStylePrompts !== "object") {
+    return nextStylePrompts;
+  }
+
+  for (const [styleId, prompt] of Object.entries(rawStylePrompts as Record<string, unknown>)) {
+    const normalizedStyleId = normalizeStyleId(styleId);
+    if (normalizedStyleId !== styleId) continue;
+    if (typeof prompt !== "string") continue;
+    nextStylePrompts[normalizedStyleId] = prompt;
+  }
+
+  return nextStylePrompts;
+}
+
+export function resolveSystemPromptForStyle(
+  styleId: string | undefined | null,
+  stylePrompts: Record<string, string>,
+): string {
+  const normalizedStyleId = normalizeStyleId(styleId);
+  return stylePrompts[normalizedStyleId] || getStyleProfile(normalizedStyleId).defaultSystemPrompt;
+}
+
 export function loadAppSettings(): AppSettings {
   if (typeof window === "undefined") return DEFAULT_APP_SETTINGS;
   try {
     const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return DEFAULT_APP_SETTINGS;
-    const parsed = JSON.parse(raw) as Partial<AppSettings> & { swallowEnabled?: boolean };
+    const parsed = JSON.parse(raw) as Partial<AppSettings> & {
+      swallowEnabled?: boolean;
+      stylePrompts?: unknown;
+    };
+    const styleId = normalizeStyleId(parsed.styleId);
+    const llm = normalizeLlmConfig(parsed.llm);
+    const stylePrompts = normalizeStylePrompts(parsed.stylePrompts, styleId, llm.systemPrompt);
     return {
       swallowEnabled: typeof parsed.swallowEnabled === "boolean" ? parsed.swallowEnabled : true,
-      styleId: normalizeStyleId(parsed.styleId),
-      llm: normalizeLlmConfig(parsed.llm),
+      styleId,
+      llm: normalizeLlmConfig({
+        ...llm,
+        systemPrompt: resolveSystemPromptForStyle(styleId, stylePrompts),
+      }),
+      stylePrompts,
     };
   } catch {
     return DEFAULT_APP_SETTINGS;

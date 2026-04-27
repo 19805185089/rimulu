@@ -59,6 +59,7 @@ export type AppSettings = {
   swallowEnabled: boolean;
   styleId: string;
   llm: LlmConfig;
+  stylePrompts: Record<string, string>;
 };
 
 export type MemoItem = {
