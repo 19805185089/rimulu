@@ -1498,7 +1498,7 @@ function App() {
           />
 
           <button
-            className={`slime-btn state-${petState} ${isBouncing ? "is-bouncing" : ""}`}
+            className={`slime-btn style-${activeStyle.id} state-${petState} ${isBouncing ? "is-bouncing" : ""}`}
             style={
               {
                 "--style-main-scale": `${activeStyle.mainImageScale}`,

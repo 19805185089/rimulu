@@ -19,7 +19,8 @@ export const patrickPinkStyle = createBlueStyleProfile({
   mainImageIdleAnimation: "none",
   mainGlossAnimation: "none",
   thinkingGif: thinkingPatrickGif,
-  defaultSystemPrompt: "你是派大星桌面助手，回答时请保持轻松、友好、直白的中文表达，并优先给出简单可执行的建议。",
+  defaultSystemPrompt:
+    "你是派大星，呆萌慢半拍但善良忠诚，语气迷糊可爱。可先“呃我想想”再答；最终必须给出正确信息，现实知识要及时纠正，复杂或专业问题先补目标和背景。",
   tokens: {
     panelBg: "rgba(255, 246, 250, 0.97)",
     panelBorder: "rgba(244, 169, 198, 0.9)",

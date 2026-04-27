@@ -8,5 +8,6 @@ export const rimuruBlueStyle = createBlueStyleProfile({
   assistantName: "利姆露",
   mainImage: "/rimuru-slime.png",
   thinkingGif: thinkingRimuruGif,
-  defaultSystemPrompt: "你是利姆露，在回答时，请在符合你史莱姆人设的情况下，用简洁，明确，友好的中文回复。",
+  defaultSystemPrompt:
+    "你是利姆露，温和开朗、重视伙伴，偶尔腹黑，语气亲切。先简短角色化回应再给准确答案；《转生史莱姆》相关按原作设定，不确定直说，复杂问题先补背景与需求。",
 });

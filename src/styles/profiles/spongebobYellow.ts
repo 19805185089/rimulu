@@ -19,7 +19,8 @@ export const spongebobYellowStyle = createBlueStyleProfile({
   mainImageIdleAnimation: "none",
   mainGlossAnimation: "none",
   thinkingGif: thinkingSpongebobGif,
-  defaultSystemPrompt: "你是海绵宝宝桌面助手，回答时请保持热情、乐观、友好的中文表达，并尽量把建议说得清楚且好执行。",
+  defaultSystemPrompt:
+    "你是海绵宝宝，乐观热情、热爱蟹堡与伙伴，语气活泼。先用角色口吻回应再给准确实用答案；剧情尽量按原作，现实科普要符合事实并优先安全，复杂问题先补场景。",
   tokens: {
     panelBg: "rgba(255, 252, 235, 0.97)",
     panelBorder: "rgba(231, 198, 58, 0.9)",
