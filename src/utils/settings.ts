@@ -1,4 +1,5 @@
 import { SETTINGS_STORAGE_KEY } from "../constants/app";
+import { DEFAULT_STYLE_ID, getStyleProfile, normalizeStyleId } from "../styles/profiles";
 import type { AppSettings, LlmConfig } from "../types/app";
 
 export const DEFAULT_LLM_CONFIG: LlmConfig = {
@@ -12,7 +13,7 @@ export const DEFAULT_LLM_CONFIG: LlmConfig = {
   baseUrl: "https://it-ai.fineres.com/v1",
   apiKey: "",
   model: "gpt-5.3-codex",
-  systemPrompt: "你是利姆露桌面助手，在回答时，请在符合你史莱姆人设的情况下，用简洁，明确，友好的中文回复。",
+  systemPrompt: getStyleProfile(DEFAULT_STYLE_ID).defaultSystemPrompt,
   temperature: 0.7,
   topP: 1,
   n: 1,
@@ -26,6 +27,7 @@ export const DEFAULT_LLM_CONFIG: LlmConfig = {
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   swallowEnabled: true,
+  styleId: DEFAULT_STYLE_ID,
   llm: DEFAULT_LLM_CONFIG,
 };
 
@@ -92,6 +94,7 @@ export function loadAppSettings(): AppSettings {
     const parsed = JSON.parse(raw) as Partial<AppSettings> & { swallowEnabled?: boolean };
     return {
       swallowEnabled: typeof parsed.swallowEnabled === "boolean" ? parsed.swallowEnabled : true,
+      styleId: normalizeStyleId(parsed.styleId),
       llm: normalizeLlmConfig(parsed.llm),
     };
   } catch {

@@ -1,8 +1,11 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, CalendarClock, Pencil, Pin, Plus, Save, Timer, Trash2, X } from "lucide-react";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
-import { INTERACTIVE_HIT_PADDING, MEMO_BOOST, MEMO_STORAGE_KEY } from "./constants/app";
+import { INTERACTIVE_HIT_PADDING, MEMO_BOOST, MEMO_STORAGE_KEY, SETTINGS_STORAGE_KEY } from "./constants/app";
+import { getStyleProfile } from "./styles/profiles";
+import { applyStyleTokensToRoot } from "./styles/theme";
 import { createEmptyMemo, loadMemos, toDatetimeLocalValue } from "./utils/memo";
+import { loadAppSettings } from "./utils/settings";
 import type { MemoItem } from "./types/app";
 import "./App.css";
 
@@ -14,6 +17,8 @@ export default function MemoWindowApp() {
   const [memos, setMemos] = useState<MemoItem[]>(() => loadMemos());
   const [memoPinned, setMemoPinned] = useState(true);
   const [draggingWindow, setDraggingWindow] = useState(false);
+  const [styleId, setStyleId] = useState(() => loadAppSettings().styleId);
+  const activeStyle = useMemo(() => getStyleProfile(styleId), [styleId]);
   const panelPosition = useMemo(() => {
     if (typeof window === "undefined") return { x: 170, y: 200 };
     const panelWidth = Math.min(274 * MEMO_BOOST, window.innerWidth - 20);
@@ -38,12 +43,20 @@ export default function MemoWindowApp() {
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
-      if (event.key !== MEMO_STORAGE_KEY) return;
-      setMemos(loadMemos());
+      if (!event.key || event.key === MEMO_STORAGE_KEY) {
+        setMemos(loadMemos());
+      }
+      if (!event.key || event.key === SETTINGS_STORAGE_KEY) {
+        setStyleId(loadAppSettings().styleId);
+      }
     };
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
+
+  useEffect(() => {
+    applyStyleTokensToRoot(activeStyle.tokens);
+  }, [activeStyle]);
 
   useEffect(() => {
     const handleMouseUp = () => setDraggingWindow(false);

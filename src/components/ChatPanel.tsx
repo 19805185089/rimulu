@@ -2,7 +2,6 @@ import { useState, type CSSProperties, type RefObject } from "react";
 import { Check, Copy, Eraser, Send, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import thinkingRimuruGif4 from "../assets/chat_thinking_rimuru_4.gif";
 import { MEMO_BOOST } from "../constants/app";
 import type { ChatMessage } from "../types/app";
 
@@ -14,6 +13,8 @@ type Props = {
   messages: ChatMessage[];
   input: string;
   isSending: boolean;
+  assistantName: string;
+  thinkingGif: string;
   onInputChange: (value: string) => void;
   onSend: () => void;
   onClearContext: () => void;
@@ -68,6 +69,8 @@ export default function ChatPanel({
   messages,
   input,
   isSending,
+  assistantName,
+  thinkingGif,
   onInputChange,
   onSend,
   onClearContext,
@@ -104,7 +107,7 @@ export default function ChatPanel({
   const copyChatHistory = async () => {
     if (!messages.length || historyCopying) return;
     setHistoryCopying(true);
-    const historyText = messages.map((message) => `[${message.role === "user" ? "你" : "利姆露"}]\n${message.content}`).join("\n\n");
+    const historyText = messages.map((message) => `[${message.role === "user" ? "你" : assistantName}]\n${message.content}`).join("\n\n");
     const copied = await copyText(historyText);
     if (!copied) {
       window.alert("复制聊天记录失败，请检查剪贴板权限。");
@@ -178,7 +181,7 @@ export default function ChatPanel({
       </header>
       <div className="chat-messages" role="log" aria-live="polite">
         {messages.length === 0 ? (
-          <div className="chat-empty">还没有聊天记录，输入消息开始和利姆露对话吧。</div>
+          <div className="chat-empty">还没有聊天记录，输入消息开始对话吧。</div>
         ) : (
           messages.map((message) => (
             <article
@@ -187,7 +190,7 @@ export default function ChatPanel({
               title={message.content}
             >
               <div className="chat-message-top">
-                <span className="chat-message-role">{message.role === "user" ? "你" : "利姆露"}</span>
+                <span className="chat-message-role">{message.role === "user" ? "你" : assistantName}</span>
                 <button
                   type="button"
                   className="chat-message-copy-btn"
@@ -223,9 +226,9 @@ export default function ChatPanel({
         )}
         {isSending && (
           <article className="chat-message assistant pending" aria-label="请求中">
-            <span className="chat-message-role">利姆露</span>
+            <span className="chat-message-role">{assistantName}</span>
             <span className="chat-message-text chat-loading" aria-live="polite">
-              <img className="chat-loading-gif" src={thinkingRimuruGif4} alt="利姆露思考中" />
+              <img className="chat-loading-gif" src={thinkingGif} alt={`${assistantName}思考中`} />
               <span>思考中</span>
             </span>
           </article>

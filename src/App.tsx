@@ -37,6 +37,8 @@ import {
 } from "./utils/progress";
 import { requestLlmReply } from "./utils/llm";
 import { loadAppSettings, normalizeLlmConfig } from "./utils/settings";
+import { getStyleProfile, STYLE_PROFILES } from "./styles/profiles";
+import { applyStyleTokensToRoot } from "./styles/theme";
 import { playSlimeClickSound } from "./utils/sound";
 import type { ChatMessage, LlmConfig, MemoItem, PetState, ProgressState, SkillEffectType } from "./types/app";
 import "./App.css";
@@ -121,6 +123,8 @@ function App() {
   const chatPanelDragRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
   const settingsPanelDragRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
   const slimePointerRef = useRef<{ startX: number; startY: number; moved: boolean } | null>(null);
+  const slimeMoveListenerRef = useRef<((event: MouseEvent) => void) | null>(null);
+  const slimeUpListenerRef = useRef<((event: MouseEvent) => void) | null>(null);
   const windowPosRef = useRef({ x: 0, y: 0 });
   const windowScaleRef = useRef(1);
   const swallowHotRef = useRef(false);
@@ -153,6 +157,7 @@ function App() {
   const [chatInput, setChatInput] = useState("");
   const [chatSending, setChatSending] = useState(false);
   const [swallowEnabled, setSwallowEnabled] = useState(initialSettingsRef.current.swallowEnabled);
+  const [styleId, setStyleId] = useState(initialSettingsRef.current.styleId);
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(initialSettingsRef.current.llm);
   const [draggedPaths, setDraggedPaths] = useState<string[]>([]);
   const [isSwallowHot, setIsSwallowHot] = useState(false);
@@ -173,6 +178,7 @@ function App() {
   const maxMp = useMemo(() => getMaxMp(progress.level), [progress.level]);
   const mpPercent = Math.min((progress.mp / maxMp) * 100, 100);
   const isFileDragging = draggedPaths.length > 0;
+  const activeStyle = useMemo(() => getStyleProfile(styleId), [styleId]);
 
   const isPositionInsideSwallowZone = (position: { x: number; y: number }) => {
     const zone = swallowZoneRef.current;
@@ -304,6 +310,7 @@ function App() {
           SETTINGS_STORAGE_KEY,
           JSON.stringify({
             swallowEnabled,
+            styleId,
             llm: normalizeLlmConfig(llmConfig),
           }),
         );
@@ -312,7 +319,11 @@ function App() {
       }
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [swallowEnabled, llmConfig]);
+  }, [swallowEnabled, styleId, llmConfig]);
+
+  useEffect(() => {
+    applyStyleTokensToRoot(activeStyle.tokens);
+  }, [activeStyle]);
 
   useEffect(() => {
     const contextMessageLimit = Math.max(1, Math.floor(llmConfig.contextTurns || 20)) * 2;
@@ -369,7 +380,7 @@ function App() {
         if (systemNotifyGranted) {
           try {
             sendNotification({
-              title: "利姆露备忘提醒",
+              title: `${activeStyle.assistantName}备忘提醒`,
               body: remindMemoTitle,
             });
           } catch {
@@ -379,7 +390,7 @@ function App() {
       }
     }, 15000);
     return () => window.clearInterval(timer);
-  }, [systemNotifyGranted]);
+  }, [systemNotifyGranted, activeStyle.assistantName]);
 
   useEffect(() => {
     swallowEnabledRef.current = swallowEnabled;
@@ -660,20 +671,22 @@ function App() {
     toggleMenu();
   };
 
-  const handleSlimeMouseDown = (event: React.MouseEvent<HTMLButtonElement>) => {
-    if (event.button !== 0) return;
-    slimePointerRef.current = {
-      startX: event.clientX,
-      startY: event.clientY,
-      moved: false,
-    };
+  const clearSlimePointerTracking = () => {
+    if (slimeMoveListenerRef.current) {
+      window.removeEventListener("mousemove", slimeMoveListenerRef.current);
+      slimeMoveListenerRef.current = null;
+    }
+    if (slimeUpListenerRef.current) {
+      window.removeEventListener("mouseup", slimeUpListenerRef.current);
+      slimeUpListenerRef.current = null;
+    }
   };
 
-  const handleSlimeMouseMove = (event: React.MouseEvent<HTMLButtonElement>) => {
+  const tryStartSlimeDragging = (clientX: number, clientY: number) => {
     const pointer = slimePointerRef.current;
     if (!pointer || pointer.moved) return;
-    const deltaX = event.clientX - pointer.startX;
-    const deltaY = event.clientY - pointer.startY;
+    const deltaX = clientX - pointer.startX;
+    const deltaY = clientY - pointer.startY;
     const distance = Math.hypot(deltaX, deltaY);
     if (distance < 4) return;
     pointer.moved = true;
@@ -682,14 +695,46 @@ function App() {
     });
   };
 
+  const handleSlimeMouseDown = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    clearSlimePointerTracking();
+    slimePointerRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    };
+    const onWindowMove = (moveEvent: MouseEvent) => {
+      tryStartSlimeDragging(moveEvent.clientX, moveEvent.clientY);
+    };
+    const onWindowUp = (upEvent: MouseEvent) => {
+      if (upEvent.button !== 0) return;
+      handleSlimeMouseUp();
+    };
+    slimeMoveListenerRef.current = onWindowMove;
+    slimeUpListenerRef.current = onWindowUp;
+    window.addEventListener("mousemove", onWindowMove);
+    window.addEventListener("mouseup", onWindowUp);
+  };
+
+  const handleSlimeMouseMove = (event: React.MouseEvent<HTMLButtonElement>) => {
+    tryStartSlimeDragging(event.clientX, event.clientY);
+  };
+
   const handleSlimeMouseUp = () => {
     const pointer = slimePointerRef.current;
+    clearSlimePointerTracking();
     if (!pointer) return;
     slimePointerRef.current = null;
     if (!pointer.moved) {
       triggerSlimeClickAction();
     }
   };
+
+  useEffect(() => {
+    return () => {
+      clearSlimePointerTracking();
+    };
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -809,7 +854,7 @@ function App() {
 
         const memoWindow = new WebviewWindow(MEMO_CHILD_WINDOW_LABEL, {
           url: "/?panel=memo",
-          title: "利姆露备忘录",
+          title: `${activeStyle.assistantName}备忘录`,
           x: logicalX,
           y: logicalY,
           width: MEMO_CHILD_WINDOW_WIDTH,
@@ -1021,6 +1066,16 @@ function App() {
     }
     const openChatWindow = async () => {
       try {
+        const pushStyleToChatWindow = async (nextStyleId: string) => {
+          try {
+            const chatWindow = await WebviewWindow.getByLabel(CHAT_CHILD_WINDOW_LABEL);
+            if (!chatWindow) return;
+            await appWindow.emitTo(CHAT_CHILD_WINDOW_LABEL, "limulu:style-changed", { styleId: nextStyleId });
+            await chatWindow.setTitle(`${getStyleProfile(nextStyleId).assistantName}聊天`);
+          } catch {
+            // Ignore style sync failures to avoid blocking chat window actions.
+          }
+        };
         let existing: WebviewWindow | null = null;
         try {
           existing = await WebviewWindow.getByLabel(CHAT_CHILD_WINDOW_LABEL);
@@ -1030,6 +1085,7 @@ function App() {
         if (existing) {
           await existing.show();
           await existing.setFocus();
+          await pushStyleToChatWindow(styleId);
           setLastAction("激活聊天子窗口");
           return;
         }
@@ -1046,8 +1102,8 @@ function App() {
         const logicalY = Math.round(outerPosition.y / scaleFactor + (defaultCenterY - CHAT_CHILD_WINDOW_HEIGHT / 2));
 
         const chatWindow = new WebviewWindow(CHAT_CHILD_WINDOW_LABEL, {
-          url: "/?panel=chat",
-          title: "利姆露聊天",
+          url: `/?panel=chat&styleId=${encodeURIComponent(styleId)}`,
+          title: `${activeStyle.assistantName}聊天`,
           x: logicalX,
           y: logicalY,
           width: CHAT_CHILD_WINDOW_WIDTH,
@@ -1333,6 +1389,8 @@ function App() {
       messages={chatMessages}
       input={chatInput}
       isSending={chatSending}
+      assistantName={activeStyle.assistantName}
+      thinkingGif={activeStyle.thinkingGif}
       onInputChange={setChatInput}
       onSend={handleSendChat}
       onClearContext={handleClearChatContext}
@@ -1356,6 +1414,35 @@ function App() {
           setLastAction(next ? "开启吞噬功能" : "关闭吞噬功能");
           setToastText(next ? "吞噬功能已开启" : "吞噬功能已关闭");
           return next;
+        });
+      }}
+      styleOptions={STYLE_PROFILES.map((styleProfile) => ({
+        id: styleProfile.id,
+        label: styleProfile.label,
+      }))}
+      styleId={styleId}
+      onStyleChange={(nextStyleId: string) => {
+        const currentStyle = getStyleProfile(styleId);
+        const nextStyle = getStyleProfile(nextStyleId);
+        setStyleId(nextStyleId);
+        void (async () => {
+          try {
+            const chatWindow = await WebviewWindow.getByLabel(CHAT_CHILD_WINDOW_LABEL);
+            if (!chatWindow) return;
+            await appWindow.emitTo(CHAT_CHILD_WINDOW_LABEL, "limulu:style-changed", { styleId: nextStyleId });
+            await chatWindow.setTitle(`${nextStyle.assistantName}聊天`);
+          } catch {
+            // Ignore if child window is not running or temporarily unavailable.
+          }
+        })();
+        setLlmConfig((prev) => {
+          const canReplacePrompt =
+            !prev.systemPrompt.trim() || prev.systemPrompt.trim() === currentStyle.defaultSystemPrompt.trim();
+          if (!canReplacePrompt) return prev;
+          return normalizeLlmConfig({
+            ...prev,
+            systemPrompt: nextStyle.defaultSystemPrompt,
+          });
         });
       }}
       llmConfig={llmConfig}
@@ -1412,15 +1499,28 @@ function App() {
 
           <button
             className={`slime-btn state-${petState} ${isBouncing ? "is-bouncing" : ""}`}
+            style={
+              {
+                "--style-main-scale": `${activeStyle.mainImageScale}`,
+                "--style-main-gloss-opacity": `${activeStyle.mainGlossOpacity}`,
+                "--style-main-gloss-bg": activeStyle.mainGlossBackground,
+                "--style-main-image-filter": activeStyle.mainImageFilter,
+                "--style-main-button-filter": activeStyle.mainButtonFilter,
+                "--style-main-button-hover-filter": activeStyle.mainButtonHoverFilter,
+                "--style-main-idle-animation": activeStyle.mainIdleAnimation,
+                "--style-main-image-idle-animation": activeStyle.mainImageIdleAnimation,
+                "--style-main-gloss-animation": activeStyle.mainGlossAnimation,
+              } as CSSProperties
+            }
             onMouseDown={handleSlimeMouseDown}
             onMouseMove={handleSlimeMouseMove}
             onMouseUp={handleSlimeMouseUp}
             onMouseLeave={handleSlimeMouseUp}
             onClick={(event) => event.preventDefault()}
-            aria-label="史莱姆主按钮"
+            aria-label={`${activeStyle.assistantName}主按钮`}
             ref={slimeRef}
           >
-            <img src="/rimuru-slime.png" className="slime-image" alt="利姆露史莱姆形态" />
+            <img src={activeStyle.mainImage} className="slime-image" alt={`${activeStyle.assistantName}形态`} />
           </button>
           {activeSkillEffect && (
             <div

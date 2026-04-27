@@ -57,6 +57,7 @@ export type LlmConfig = {
 
 export type AppSettings = {
   swallowEnabled: boolean;
+  styleId: string;
   llm: LlmConfig;
 };
 

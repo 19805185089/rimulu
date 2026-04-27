@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import ChatPanel from "./components/ChatPanel";
 import { INTERACTIVE_HIT_PADDING, SETTINGS_STORAGE_KEY } from "./constants/app";
+import { getStyleProfile } from "./styles/profiles";
+import { applyStyleTokensToRoot } from "./styles/theme";
 import { loadAppSettings } from "./utils/settings";
 import { requestLlmReply } from "./utils/llm";
 import type { ChatMessage } from "./types/app";
@@ -17,6 +19,12 @@ const createChatMessage = (role: "user" | "assistant", content: string): ChatMes
   createdAt: Date.now(),
 });
 
+const getStyleIdFromQuery = () => {
+  if (typeof window === "undefined") return undefined;
+  const value = new URLSearchParams(window.location.search).get("styleId");
+  return value && value.trim() ? value : undefined;
+};
+
 export default function ChatWindowApp() {
   const appWindow = useMemo(() => getCurrentWindow(), []);
   const chatPanelRef = useRef<HTMLElement | null>(null);
@@ -27,6 +35,8 @@ export default function ChatWindowApp() {
   const [chatSending, setChatSending] = useState(false);
   const [draggingWindow, setDraggingWindow] = useState(false);
   const [llmConfig, setLlmConfig] = useState(() => loadAppSettings().llm);
+  const [styleId, setStyleId] = useState(() => getStyleIdFromQuery() ?? loadAppSettings().styleId);
+  const activeStyle = useMemo(() => getStyleProfile(styleId), [styleId]);
   const panelPosition = useMemo(() => {
     if (typeof window === "undefined") return { x: 390, y: 460 };
     const panelWidth = Math.min(630 * 1.2, window.innerWidth - 20);
@@ -39,19 +49,57 @@ export default function ChatWindowApp() {
 
   useEffect(() => {
     const syncSettings = () => {
-      setLlmConfig(loadAppSettings().llm);
+      const settings = loadAppSettings();
+      setLlmConfig((prev) => {
+        const prevText = JSON.stringify(prev);
+        const nextText = JSON.stringify(settings.llm);
+        return prevText === nextText ? prev : settings.llm;
+      });
     };
     const handleStorage = (event: StorageEvent) => {
       if (event.key && event.key !== SETTINGS_STORAGE_KEY) return;
       syncSettings();
     };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        syncSettings();
+      }
+    };
+    const timer = window.setInterval(syncSettings, 700);
     window.addEventListener("storage", handleStorage);
     window.addEventListener("focus", syncSettings);
+    document.addEventListener("visibilitychange", handleVisibility);
     return () => {
+      window.clearInterval(timer);
       window.removeEventListener("storage", handleStorage);
       window.removeEventListener("focus", syncSettings);
+      document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, []);
+
+  useEffect(() => {
+    applyStyleTokensToRoot(activeStyle.tokens);
+  }, [activeStyle]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    const bindStyleSyncEvent = async () => {
+      unlisten = await appWindow.listen<{ styleId?: string }>("limulu:style-changed", (event) => {
+        if (cancelled) return;
+        const nextStyleId = event.payload?.styleId;
+        if (!nextStyleId) return;
+        setStyleId((prev) => (prev === nextStyleId ? prev : nextStyleId));
+      });
+    };
+
+    void bindStyleSyncEvent();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [appWindow]);
 
   useEffect(() => {
     const handleMouseUp = () => setDraggingWindow(false);
@@ -186,6 +234,8 @@ export default function ChatWindowApp() {
         messages={chatMessages}
         input={chatInput}
         isSending={chatSending}
+        assistantName={activeStyle.assistantName}
+        thinkingGif={activeStyle.thinkingGif}
         onInputChange={setChatInput}
         onSend={handleSendChat}
         onClearContext={() => setChatMessages([])}

@@ -11,6 +11,9 @@ type Props = {
   onHeaderMouseDown: (event: React.MouseEvent<HTMLElement>) => void;
   swallowEnabled: boolean;
   onToggleSwallow: () => void;
+  styleOptions: Array<{ id: string; label: string }>;
+  styleId: string;
+  onStyleChange: (styleId: string) => void;
   llmConfig: LlmConfig;
   onUpdateLlmConfig: (patch: Partial<LlmConfig>) => void;
   onClose: () => void;
@@ -23,6 +26,9 @@ export default function SettingsPanel({
   onHeaderMouseDown,
   swallowEnabled,
   onToggleSwallow,
+  styleOptions,
+  styleId,
+  onStyleChange,
   llmConfig,
   onUpdateLlmConfig,
   onClose,
@@ -66,7 +72,7 @@ export default function SettingsPanel({
               >
                 <CircleHelp size={11} strokeWidth={2.15} />
               </button>
-              <span className="settings-help-tip">拖拽文件到史莱姆嘴部热区，确认后移入回收站。</span>
+              <span className="settings-help-tip">拖拽文件到主体热区，确认后移入回收站。</span>
             </span>
           </div>
           <button
@@ -79,6 +85,18 @@ export default function SettingsPanel({
           >
             <span className="settings-switch-dot" />
           </button>
+        </div>
+        <div className="settings-row settings-row-column">
+          <label className="settings-field">
+            <span className="settings-field-label">风格</span>
+            <select className="settings-input" value={styleId} onChange={(event) => onStyleChange(event.target.value)}>
+              {styleOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <div className="settings-row settings-row-column">
           <div className="settings-row-main">
