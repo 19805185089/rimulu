@@ -295,18 +295,6 @@ function App() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try {
-        const savedMemos = memos.filter((memo) => memo.saved);
-        window.localStorage.setItem(MEMO_STORAGE_KEY, JSON.stringify(savedMemos));
-      } catch {
-        // Ignore storage failures and keep runtime behavior stable.
-      }
-    }, 700);
-    return () => window.clearTimeout(timer);
-  }, [memos]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      try {
         window.localStorage.setItem(
           SETTINGS_STORAGE_KEY,
           JSON.stringify({
@@ -870,6 +858,7 @@ function App() {
           transparent: true,
           visible: true,
           focus: true,
+          acceptFirstMouse: true,
         });
 
         memoWindow.once("tauri://error", (event) => {
@@ -908,6 +897,15 @@ function App() {
     setMemos((prev) => prev.map((memo) => (memo.id === memoId ? { ...memo, ...patch } : memo)));
   };
 
+  const persistSavedMemos = (nextMemos: MemoItem[]) => {
+    try {
+      const savedMemos = nextMemos.filter((memo) => memo.saved);
+      window.localStorage.setItem(MEMO_STORAGE_KEY, JSON.stringify(savedMemos));
+    } catch {
+      // Ignore storage failures and keep runtime behavior stable.
+    }
+  };
+
   const toggleMemoCheck = (memoId: string) => {
     setMemos((prev) =>
       prev.map((memo) => {
@@ -936,8 +934,8 @@ function App() {
 
   const saveMemo = (memoId: string) => {
     let saved = false;
-    setMemos((prev) =>
-      prev.map((memo) => {
+    setMemos((prev) => {
+      const nextMemos = prev.map((memo) => {
         if (memo.id !== memoId) return memo;
         const trimmedTitle = memo.title.trim();
         if (!trimmedTitle) return memo;
@@ -948,8 +946,10 @@ function App() {
           saved: true,
           editing: false,
         };
-      }),
-    );
+      });
+      persistSavedMemos(nextMemos);
+      return nextMemos;
+    });
     if (saved) {
       setToastText("备忘录已保存");
       setLastAction("保存备忘录");
@@ -974,7 +974,11 @@ function App() {
       cancelLabel: "取消",
     });
     if (!confirmed) return;
-    setMemos((prev) => prev.filter((memo) => memo.id !== memoId));
+    setMemos((prev) => {
+      const nextMemos = prev.filter((memo) => memo.id !== memoId);
+      persistSavedMemos(nextMemos);
+      return nextMemos;
+    });
     setLastAction("删除备忘录");
   };
 

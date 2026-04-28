@@ -954,22 +954,22 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(181, 222, 245, 0.9);
+  border: 1px solid var(--theme-panel-border);
   border-radius: 999px;
-  background: rgba(252, 255, 255, 0.92);
-  color: rgba(55, 103, 136, 0.92);
+  background: color-mix(in srgb, var(--theme-panel-bg) 68%, white 32%);
+  color: var(--theme-menu-text);
   cursor: pointer;
   transition: transform 140ms ease, background-color 160ms ease, border-color 160ms ease;
 }
 
 .memo-top-btn.active {
-  background: rgba(232, 246, 255, 0.95);
-  border-color: rgba(159, 211, 241, 0.95);
+  background: color-mix(in srgb, var(--theme-panel-bg) 58%, white 42%);
+  border-color: var(--theme-menu-border);
 }
 
 .memo-top-btn:hover {
   transform: translateY(-1px);
-  background: rgba(237, 248, 255, 0.96);
+  background: color-mix(in srgb, var(--theme-panel-bg) 62%, white 38%);
 }
 
 .memo-top-btn svg {
@@ -989,9 +989,9 @@ body {
 .memo-empty {
   padding: calc(10px * var(--memo-boost)) calc(8px * var(--memo-boost));
   border-radius: calc(10px * var(--memo-boost));
-  background: rgba(221, 242, 255, 0.4);
-  border: 1px dashed rgba(149, 207, 243, 0.8);
-  color: rgba(44, 98, 133, 0.88);
+  background: color-mix(in srgb, var(--theme-panel-bg) 72%, white 28%);
+  border: 1px dashed var(--theme-panel-border);
+  color: var(--theme-body-text);
   font-size: calc(10px * var(--memo-boost));
   text-align: center;
 }
@@ -1002,8 +1002,8 @@ body {
   gap: calc(4px * var(--memo-boost)) calc(7px * var(--memo-boost));
   padding: calc(6px * var(--memo-boost));
   border-radius: calc(9px * var(--memo-boost));
-  background: rgba(248, 253, 255, 0.9);
-  border: 1px solid rgba(195, 228, 247, 0.78);
+  background: color-mix(in srgb, var(--theme-panel-bg) 70%, white 30%);
+  border: 1px solid var(--theme-panel-border);
 }
 
 .memo-row.done {
@@ -1011,7 +1011,7 @@ body {
 }
 
 .memo-row.saved {
-  background: rgba(249, 254, 255, 0.92);
+  background: color-mix(in srgb, var(--theme-panel-bg) 74%, white 26%);
 }
 
 .memo-row.draft {
@@ -1030,11 +1030,11 @@ body {
 .memo-time,
 .memo-duration {
   width: 100%;
-  border: 1px solid rgba(176, 218, 243, 0.82);
+  border: 1px solid var(--theme-panel-border);
   border-radius: calc(7px * var(--memo-boost));
   padding: 0 calc(6px * var(--memo-boost));
-  background: rgba(255, 255, 255, 0.96);
-  color: rgba(37, 86, 117, 0.96);
+  background: color-mix(in srgb, var(--theme-panel-bg) 62%, white 38%);
+  color: var(--theme-body-text);
   font-size: calc(10px * var(--memo-boost));
 }
 
@@ -1060,8 +1060,8 @@ body {
   line-height: calc(24px * var(--memo-boost));
   padding: 0 calc(6px * var(--memo-boost));
   border-radius: calc(7px * var(--memo-boost));
-  border: 1px solid rgba(183, 224, 247, 0.82);
-  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--theme-panel-border);
+  background: color-mix(in srgb, var(--theme-panel-bg) 64%, white 36%);
   color: var(--theme-body-text);
   font-size: calc(10px * var(--memo-boost));
   white-space: nowrap;
@@ -1071,7 +1071,7 @@ body {
 
 .memo-row.done .memo-text {
   text-decoration: line-through;
-  color: rgba(74, 112, 138, 0.9);
+  color: var(--theme-muted-text);
 }
 
 .memo-field {
@@ -1082,7 +1082,7 @@ body {
 }
 
 .memo-field-icon {
-  color: rgba(62, 112, 145, 0.9);
+  color: var(--theme-muted-text);
   flex-shrink: 0;
 }
 

@@ -1,7 +1,7 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useState } from "react";
 import { Bell, CalendarClock, Pencil, Pin, Plus, Save, Timer, Trash2, X } from "lucide-react";
-import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
-import { INTERACTIVE_HIT_PADDING, MEMO_BOOST, MEMO_STORAGE_KEY, SETTINGS_STORAGE_KEY } from "./constants/app";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { MEMO_BOOST, MEMO_STORAGE_KEY, SETTINGS_STORAGE_KEY } from "./constants/app";
 import { getStyleProfile } from "./styles/profiles";
 import { applyStyleTokensToRoot } from "./styles/theme";
 import { createEmptyMemo, loadMemos, toDatetimeLocalValue } from "./utils/memo";
@@ -11,12 +11,8 @@ import "./App.css";
 
 export default function MemoWindowApp() {
   const appWindow = useMemo(() => getCurrentWindow(), []);
-  const panelRef = useRef<HTMLElement | null>(null);
-  const windowPosRef = useRef({ x: 0, y: 0 });
-  const windowScaleRef = useRef(1);
   const [memos, setMemos] = useState<MemoItem[]>(() => loadMemos());
   const [memoPinned, setMemoPinned] = useState(true);
-  const [draggingWindow, setDraggingWindow] = useState(false);
   const [styleId, setStyleId] = useState(() => loadAppSettings().styleId);
   const activeStyle = useMemo(() => getStyleProfile(styleId), [styleId]);
   const panelPosition = useMemo(() => {
@@ -30,22 +26,7 @@ export default function MemoWindowApp() {
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      try {
-        const savedMemos = memos.filter((memo) => memo.saved);
-        window.localStorage.setItem(MEMO_STORAGE_KEY, JSON.stringify(savedMemos));
-      } catch {
-        // Ignore storage errors to keep the editor interactive.
-      }
-    }, 700);
-    return () => window.clearTimeout(timer);
-  }, [memos]);
-
-  useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
-      if (!event.key || event.key === MEMO_STORAGE_KEY) {
-        setMemos(loadMemos());
-      }
       if (!event.key || event.key === SETTINGS_STORAGE_KEY) {
         setStyleId(loadAppSettings().styleId);
       }
@@ -58,89 +39,21 @@ export default function MemoWindowApp() {
     applyStyleTokensToRoot(activeStyle.tokens);
   }, [activeStyle]);
 
-  useEffect(() => {
-    const handleMouseUp = () => setDraggingWindow(false);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => window.removeEventListener("mouseup", handleMouseUp);
-  }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    let movedUnlisten: (() => void) | undefined;
-    let scaleUnlisten: (() => void) | undefined;
-    let timer: number | undefined;
-    let lastIgnoreState: boolean | null = null;
-
-    const syncWindowMetrics = async () => {
-      try {
-        const [position, scaleFactor] = await Promise.all([appWindow.outerPosition(), appWindow.scaleFactor()]);
-        windowPosRef.current = { x: position.x, y: position.y };
-        windowScaleRef.current = scaleFactor;
-      } catch {
-        // Keep previous metrics if API temporarily fails.
-      }
-    };
-
-    const isCursorInsidePanel = (x: number, y: number) => {
-      const panel = panelRef.current;
-      if (!panel) return false;
-      const rect = panel.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return false;
-      const hitPadding = INTERACTIVE_HIT_PADDING * windowScaleRef.current;
-      const left = windowPosRef.current.x + rect.left * windowScaleRef.current - hitPadding;
-      const right = windowPosRef.current.x + rect.right * windowScaleRef.current + hitPadding;
-      const top = windowPosRef.current.y + rect.top * windowScaleRef.current - hitPadding;
-      const bottom = windowPosRef.current.y + rect.bottom * windowScaleRef.current + hitPadding;
-      return x >= left && x <= right && y >= top && y <= bottom;
-    };
-
-    const loop = async () => {
-      if (disposed) return;
-      try {
-        const cursor = await cursorPosition();
-        const shouldCapture = draggingWindow || isCursorInsidePanel(cursor.x, cursor.y);
-        const shouldIgnore = !shouldCapture;
-        if (lastIgnoreState !== shouldIgnore) {
-          await appWindow.setIgnoreCursorEvents(shouldIgnore);
-          lastIgnoreState = shouldIgnore;
-        }
-      } catch {
-        // Ignore transient cursor/mutex failures.
-      }
-      timer = window.setTimeout(() => {
-        void loop();
-      }, 80);
-    };
-
-    const init = async () => {
-      await syncWindowMetrics();
-      movedUnlisten = await appWindow.onMoved(({ payload }) => {
-        windowPosRef.current = { x: payload.x, y: payload.y };
-      });
-      scaleUnlisten = await appWindow.onScaleChanged(({ payload }) => {
-        windowScaleRef.current = payload.scaleFactor;
-      });
-      void loop();
-    };
-
-    void init();
-    return () => {
-      disposed = true;
-      if (typeof timer === "number") {
-        window.clearTimeout(timer);
-      }
-      if (movedUnlisten) movedUnlisten();
-      if (scaleUnlisten) scaleUnlisten();
-      void appWindow.setIgnoreCursorEvents(false);
-    };
-  }, [appWindow, draggingWindow]);
-
   const addMemo = () => {
     setMemos((prev) => [...prev, createEmptyMemo()]);
   };
 
   const updateMemo = (memoId: string, patch: Partial<MemoItem>) => {
     setMemos((prev) => prev.map((memo) => (memo.id === memoId ? { ...memo, ...patch } : memo)));
+  };
+
+  const persistSavedMemos = (nextMemos: MemoItem[]) => {
+    try {
+      const savedMemos = nextMemos.filter((memo) => memo.saved);
+      window.localStorage.setItem(MEMO_STORAGE_KEY, JSON.stringify(savedMemos));
+    } catch {
+      // Ignore storage errors to keep the editor interactive.
+    }
   };
 
   const toggleMemoCheck = (memoId: string) => {
@@ -170,8 +83,8 @@ export default function MemoWindowApp() {
   };
 
   const saveMemo = (memoId: string) => {
-    setMemos((prev) =>
-      prev.map((memo) => {
+    setMemos((prev) => {
+      const nextMemos = prev.map((memo) => {
         if (memo.id !== memoId) return memo;
         const trimmedTitle = memo.title.trim();
         if (!trimmedTitle) return memo;
@@ -181,20 +94,20 @@ export default function MemoWindowApp() {
           saved: true,
           editing: false,
         };
-      }),
-    );
+      });
+      persistSavedMemos(nextMemos);
+      return nextMemos;
+    });
   };
 
   const removeMemo = (memoId: string) => {
     const target = memos.find((memo) => memo.id === memoId);
     if (!target) return;
-    if (!target.saved) {
-      setMemos((prev) => prev.filter((memo) => memo.id !== memoId));
-      return;
-    }
-    const label = target.title.trim() || "这条备忘录";
-    if (!window.confirm(`确认删除“${label}”吗？`)) return;
-    setMemos((prev) => prev.filter((memo) => memo.id !== memoId));
+    setMemos((prev) => {
+      const nextMemos = prev.filter((memo) => memo.id !== memoId);
+      persistSavedMemos(nextMemos);
+      return nextMemos;
+    });
   };
 
   const updateMemoReminder = (memoId: string, reminderAt: string) => {
@@ -222,7 +135,6 @@ export default function MemoWindowApp() {
     <main className="pet-app">
       <aside
         className="memo-panel open"
-        ref={panelRef}
         style={
           {
             left: `${panelPosition.x}px`,
@@ -237,7 +149,6 @@ export default function MemoWindowApp() {
           onMouseDown={(event) => {
             if (event.button !== 0) return;
             if (memoPinned) return;
-            setDraggingWindow(true);
             event.preventDefault();
             void appWindow.startDragging();
           }}
