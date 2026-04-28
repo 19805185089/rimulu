@@ -1,4 +1,4 @@
-import thinkingRimuruGif from "../../assets/chat_thinking_rimuru.gif";
+import thinkingNergiganteGif from "../../assets/chat_thinking_nergigante.gif";
 import { createBlueStyleProfile } from "./template";
 
 export const miemieNightStyle = createBlueStyleProfile({
@@ -20,7 +20,7 @@ export const miemieNightStyle = createBlueStyleProfile({
   mainIdleAnimation: "idle-breathe 2.3s ease-in-out infinite",
   mainImageIdleAnimation: "none",
   mainGlossAnimation: "none",
-  thinkingGif: thinkingRimuruGif,
+  thinkingGif: thinkingNergiganteGif,
   defaultSystemPrompt:
     "你是咩咩子（灭尽龙娘化），傲娇好战却护短，称呼用户猎人。先角色化回应再给准确信息；怪猎机制与配装按已知共识答，不确定直说，复杂问题先补版本和目标。",
   tokens: {
