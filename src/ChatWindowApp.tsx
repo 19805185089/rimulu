@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import ChatPanel from "./components/ChatPanel";
 import { INTERACTIVE_HIT_PADDING, SETTINGS_STORAGE_KEY } from "./constants/app";
-import { getStyleProfile, normalizeStyleId } from "./styles/profiles";
+import { createHatchPetStyleProfile, getStyleProfile, normalizeStyleId, STYLE_PROFILES } from "./styles/profiles";
 import { applyStyleTokensToRoot } from "./styles/theme";
+import { HATCH_PETS_STORAGE_KEY, loadInstalledHatchPets } from "./utils/hatchPets";
 import { loadAppSettings, normalizeLlmConfig, resolveSystemPromptForStyle } from "./utils/settings";
 import { requestLlmReply } from "./utils/llm";
 import type { ChatMessage } from "./types/app";
+import type { StyleProfile } from "./styles/profiles";
 import "./App.css";
 
 const createChatMessage = (role: "user" | "assistant", content: string): ChatMessage => ({
@@ -35,6 +37,7 @@ export default function ChatWindowApp() {
   const [chatSending, setChatSending] = useState(false);
   const [draggingWindow, setDraggingWindow] = useState(false);
   const [styleId, setStyleId] = useState(() => normalizeStyleId(getStyleIdFromQuery() ?? loadAppSettings().styleId));
+  const [hatchPetStyles, setHatchPetStyles] = useState<StyleProfile[]>([]);
   const [llmConfig, setLlmConfig] = useState(() => {
     const settings = loadAppSettings();
     const initialStyleId = normalizeStyleId(getStyleIdFromQuery() ?? settings.styleId);
@@ -43,7 +46,11 @@ export default function ChatWindowApp() {
       systemPrompt: resolveSystemPromptForStyle(initialStyleId, settings.stylePrompts),
     });
   });
-  const activeStyle = useMemo(() => getStyleProfile(styleId), [styleId]);
+  const styleProfiles = useMemo(() => [...STYLE_PROFILES, ...hatchPetStyles], [hatchPetStyles]);
+  const activeStyle = useMemo(
+    () => styleProfiles.find((styleProfile) => styleProfile.id === styleId) ?? getStyleProfile(styleId),
+    [styleId, styleProfiles],
+  );
   const panelPosition = useMemo(() => {
     if (typeof window === "undefined") return { x: 390, y: 460 };
     const panelWidth = Math.min(630 * 1.2, window.innerWidth - 20);
@@ -55,12 +62,34 @@ export default function ChatWindowApp() {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
+    const loadPets = async () => {
+      const pets = await loadInstalledHatchPets();
+      if (disposed) return;
+      setHatchPetStyles(pets.map(createHatchPetStyleProfile));
+    };
+    void loadPets();
+    const handleStorage = (event: StorageEvent) => {
+      if (!event.key || event.key === HATCH_PETS_STORAGE_KEY) {
+        void loadPets();
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      disposed = true;
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
+
+  useEffect(() => {
     const syncSettings = (targetStyleId = styleId) => {
       const normalizedTargetStyleId = normalizeStyleId(targetStyleId);
       const settings = loadAppSettings();
+      const targetStyle = styleProfiles.find((styleProfile) => styleProfile.id === normalizedTargetStyleId) ?? getStyleProfile(normalizedTargetStyleId);
+      const systemPrompt = settings.stylePrompts[normalizedTargetStyleId] || targetStyle.defaultSystemPrompt;
       const nextLlmConfig = normalizeLlmConfig({
         ...settings.llm,
-        systemPrompt: resolveSystemPromptForStyle(normalizedTargetStyleId, settings.stylePrompts),
+        systemPrompt,
       });
       setLlmConfig((prev) => (JSON.stringify(prev) === JSON.stringify(nextLlmConfig) ? prev : nextLlmConfig));
     };
@@ -86,7 +115,7 @@ export default function ChatWindowApp() {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [styleId]);
+  }, [styleId, styleProfiles]);
 
   useEffect(() => {
     applyStyleTokensToRoot(activeStyle.tokens);
@@ -104,10 +133,11 @@ export default function ChatWindowApp() {
         const normalizedNextStyleId = normalizeStyleId(nextStyleId);
         setStyleId((prev) => (prev === normalizedNextStyleId ? prev : normalizedNextStyleId));
         const settings = loadAppSettings();
+        const nextStyle = styleProfiles.find((styleProfile) => styleProfile.id === normalizedNextStyleId) ?? getStyleProfile(normalizedNextStyleId);
         setLlmConfig((prev) => {
           const nextLlmConfig = normalizeLlmConfig({
             ...settings.llm,
-            systemPrompt: resolveSystemPromptForStyle(normalizedNextStyleId, settings.stylePrompts),
+            systemPrompt: settings.stylePrompts[normalizedNextStyleId] || nextStyle.defaultSystemPrompt,
           });
           return JSON.stringify(prev) === JSON.stringify(nextLlmConfig) ? prev : nextLlmConfig;
         });
@@ -119,7 +149,7 @@ export default function ChatWindowApp() {
       cancelled = true;
       if (unlisten) unlisten();
     };
-  }, [appWindow]);
+  }, [appWindow, styleProfiles]);
 
   useEffect(() => {
     const handleMouseUp = () => setDraggingWindow(false);
@@ -256,6 +286,7 @@ export default function ChatWindowApp() {
         isSending={chatSending}
         assistantName={activeStyle.assistantName}
         thinkingGif={activeStyle.thinkingGif}
+        hatchPet={activeStyle.hatchPet}
         onInputChange={setChatInput}
         onSend={handleSendChat}
         onClearContext={() => setChatMessages([])}

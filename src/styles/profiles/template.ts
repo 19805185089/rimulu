@@ -1,3 +1,5 @@
+import type { PetState } from "../../types/app";
+
 export type StyleTokens = {
   panelBg: string;
   panelBorder: string;
@@ -20,12 +22,30 @@ export type StyleTokens = {
   mpFillTo: string;
 };
 
+export type HatchPetAnimation = {
+  row: number;
+  frames?: number;
+  durations?: number[];
+};
+
+export type HatchPetConfig = {
+  spritesheet: string;
+  displayName: string;
+  description: string;
+  columns?: number;
+  rows?: number;
+  cellWidth?: number;
+  cellHeight?: number;
+  animations?: Partial<Record<PetState, HatchPetAnimation>>;
+};
+
 export type StyleProfile = {
   id: string;
   label: string;
   description: string;
   assistantName: string;
   mainImage: string;
+  hatchPet?: HatchPetConfig;
   mainImageScale: number;
   mainGlossOpacity: number;
   mainGlossBackground: string;

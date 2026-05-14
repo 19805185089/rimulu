@@ -2,11 +2,13 @@ import { type CSSProperties, useEffect, useMemo, useState } from "react";
 import { Bell, CalendarClock, Pencil, Pin, Plus, Save, Timer, Trash2, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { MEMO_BOOST, MEMO_STORAGE_KEY, SETTINGS_STORAGE_KEY } from "./constants/app";
-import { getStyleProfile } from "./styles/profiles";
+import { createHatchPetStyleProfile, getStyleProfile, STYLE_PROFILES } from "./styles/profiles";
 import { applyStyleTokensToRoot } from "./styles/theme";
+import { HATCH_PETS_STORAGE_KEY, loadInstalledHatchPets } from "./utils/hatchPets";
 import { createEmptyMemo, loadMemos, toDatetimeLocalValue } from "./utils/memo";
 import { loadAppSettings } from "./utils/settings";
 import type { MemoItem } from "./types/app";
+import type { StyleProfile } from "./styles/profiles";
 import "./App.css";
 
 export default function MemoWindowApp() {
@@ -14,7 +16,12 @@ export default function MemoWindowApp() {
   const [memos, setMemos] = useState<MemoItem[]>(() => loadMemos());
   const [memoPinned, setMemoPinned] = useState(true);
   const [styleId, setStyleId] = useState(() => loadAppSettings().styleId);
-  const activeStyle = useMemo(() => getStyleProfile(styleId), [styleId]);
+  const [hatchPetStyles, setHatchPetStyles] = useState<StyleProfile[]>([]);
+  const styleProfiles = useMemo(() => [...STYLE_PROFILES, ...hatchPetStyles], [hatchPetStyles]);
+  const activeStyle = useMemo(
+    () => styleProfiles.find((styleProfile) => styleProfile.id === styleId) ?? getStyleProfile(styleId),
+    [styleId, styleProfiles],
+  );
   const panelPosition = useMemo(() => {
     if (typeof window === "undefined") return { x: 170, y: 200 };
     const panelWidth = Math.min(274 * MEMO_BOOST, window.innerWidth - 20);
@@ -22,6 +29,26 @@ export default function MemoWindowApp() {
     return {
       x: panelWidth / 2 + 10,
       y: panelHeight / 2 + 10,
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    const loadPets = async () => {
+      const pets = await loadInstalledHatchPets();
+      if (disposed) return;
+      setHatchPetStyles(pets.map(createHatchPetStyleProfile));
+    };
+    void loadPets();
+    const handleStorage = (event: StorageEvent) => {
+      if (!event.key || event.key === HATCH_PETS_STORAGE_KEY) {
+        void loadPets();
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      disposed = true;
+      window.removeEventListener("storage", handleStorage);
     };
   }, []);
 

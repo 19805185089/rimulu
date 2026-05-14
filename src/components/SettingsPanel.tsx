@@ -1,5 +1,5 @@
-import type { CSSProperties, RefObject } from "react";
-import { CircleHelp, X } from "lucide-react";
+import { useRef, type CSSProperties, type RefObject } from "react";
+import { CircleHelp, Upload, X } from "lucide-react";
 import { MEMO_BOOST } from "../constants/app";
 import type { LlmConfig } from "../types/app";
 import { getLlmEndpointSuffix } from "../utils/llm";
@@ -14,6 +14,8 @@ type Props = {
   styleOptions: Array<{ id: string; label: string }>;
   styleId: string;
   onStyleChange: (styleId: string) => void;
+  hatchPetInstalling: boolean;
+  onInstallHatchPetZip: (file: File) => void;
   llmConfig: LlmConfig;
   onUpdateLlmConfig: (patch: Partial<LlmConfig>) => void;
   onClose: () => void;
@@ -29,10 +31,14 @@ export default function SettingsPanel({
   styleOptions,
   styleId,
   onStyleChange,
+  hatchPetInstalling,
+  onInstallHatchPetZip,
   llmConfig,
   onUpdateLlmConfig,
   onClose,
 }: Props) {
+  const hatchPetFileInputRef = useRef<HTMLInputElement | null>(null);
+
   if (!open) return null;
   const endpointSuffix = getLlmEndpointSuffix(llmConfig);
   const isClaudeCodeProvider = llmConfig.provider === "claudecode";
@@ -97,6 +103,30 @@ export default function SettingsPanel({
               ))}
             </select>
           </label>
+          <div className="settings-inline-actions">
+            <input
+              ref={hatchPetFileInputRef}
+              type="file"
+              accept=".zip,application/zip,application/x-zip-compressed"
+              className="settings-file-input"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.currentTarget.value = "";
+                if (file) onInstallHatchPetZip(file);
+              }}
+            />
+            <button
+              type="button"
+              className="settings-action-button"
+              onClick={() => hatchPetFileInputRef.current?.click()}
+              disabled={hatchPetInstalling}
+              aria-label="上传 zip 安装 Hatch Pet"
+              title="上传 zip 安装 Hatch Pet"
+            >
+              <Upload size={12} strokeWidth={2.2} />
+              <span>{hatchPetInstalling ? "安装中" : "上传 zip 安装"}</span>
+            </button>
+          </div>
         </div>
         <div className="settings-row settings-row-column">
           <div className="settings-row-main">

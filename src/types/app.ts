@@ -1,4 +1,4 @@
-export type PetState = "idle" | "hover" | "active";
+export type PetState = "idle" | "hover" | "active" | "running-right" | "running-left" | "processing";
 
 export type ProgressState = {
   level: number;

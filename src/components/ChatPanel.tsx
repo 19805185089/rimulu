@@ -3,7 +3,9 @@ import { Check, Copy, Eraser, Send, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MEMO_BOOST } from "../constants/app";
+import type { HatchPetConfig } from "../styles/profiles";
 import type { ChatMessage } from "../types/app";
+import HatchPetSprite from "./HatchPetSprite";
 
 type Props = {
   open: boolean;
@@ -15,6 +17,7 @@ type Props = {
   isSending: boolean;
   assistantName: string;
   thinkingGif: string;
+  hatchPet?: HatchPetConfig;
   onInputChange: (value: string) => void;
   onSend: () => void;
   onClearContext: () => void;
@@ -71,6 +74,7 @@ export default function ChatPanel({
   isSending,
   assistantName,
   thinkingGif,
+  hatchPet,
   onInputChange,
   onSend,
   onClearContext,
@@ -228,7 +232,16 @@ export default function ChatPanel({
           <article className="chat-message assistant pending" aria-label="请求中">
             <span className="chat-message-role">{assistantName}</span>
             <span className="chat-message-text chat-loading" aria-live="polite">
-              <img className="chat-loading-gif" src={thinkingGif} alt={`${assistantName}思考中`} />
+              {hatchPet ? (
+                <HatchPetSprite
+                  state="processing"
+                  config={hatchPet}
+                  className="chat-loading-hatch-pet"
+                  ariaLabel={`${assistantName}思考中`}
+                />
+              ) : (
+                <img className="chat-loading-gif" src={thinkingGif} alt={`${assistantName}思考中`} />
+              )}
               <span>思考中</span>
             </span>
           </article>

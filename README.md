@@ -63,6 +63,14 @@ npm run dev
   - `claude-code` -> `/messages`
 - 最小兼容模式开启时仅发送基础入参（如 `model/messages`），细节参数（`temperature/top_p/penalty/stop`）会被忽略
 
+## Hatch Pet 风格拓展
+
+- 已支持接入现有 `hatch-pet` 包，无需在本项目内构建宠物素材
+- 安装入口：设置面板 `风格` 区域的“上传 zip 安装”
+- zip 包需包含 `pet.json` 和 `spritesheet` 文件（`pet.json` 中的 `spritesheetPath` 需可定位到对应文件）
+- 安装成功后会自动写入本地安装记录，并在风格下拉中新增对应 `hatch-pet` 风格
+- 菜单与面板主题会根据宠物主题色（或从 spritesheet 自动提取的主色）进行适配
+
 ## 默认配置
 
 默认值来源于 `src/utils/settings.ts`：

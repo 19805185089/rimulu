@@ -6,6 +6,7 @@ import { PhysicalPosition, PhysicalSize, cursorPosition, currentMonitor, getCurr
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import ChatPanel from "./components/ChatPanel";
+import HatchPetSprite from "./components/HatchPetSprite";
 import MenuRing from "./components/MenuRing";
 import SettingsPanel from "./components/SettingsPanel";
 import SkillFan from "./components/SkillFan";
@@ -36,11 +37,13 @@ import {
   loadProgress,
 } from "./utils/progress";
 import { requestLlmReply } from "./utils/llm";
-import { loadAppSettings, normalizeLlmConfig, resolveSystemPromptForStyle } from "./utils/settings";
-import { getStyleProfile, normalizeStyleId, STYLE_PROFILES } from "./styles/profiles";
+import { installHatchPetZip, loadInstalledHatchPets } from "./utils/hatchPets";
+import { loadAppSettings, normalizeLlmConfig } from "./utils/settings";
+import { createHatchPetStyleProfile, getStyleProfile, normalizeStyleId, STYLE_PROFILES } from "./styles/profiles";
 import { applyStyleTokensToRoot } from "./styles/theme";
 import { playSlimeClickSound } from "./utils/sound";
 import type { ChatMessage, LlmConfig, MemoItem, PetState, ProgressState, SkillEffectType } from "./types/app";
+import type { StyleProfile } from "./styles/profiles";
 import "./App.css";
 
 type ConfirmDialogState = {
@@ -125,6 +128,8 @@ function App() {
   const slimePointerRef = useRef<{ startX: number; startY: number; moved: boolean } | null>(null);
   const slimeMoveListenerRef = useRef<((event: MouseEvent) => void) | null>(null);
   const slimeUpListenerRef = useRef<((event: MouseEvent) => void) | null>(null);
+  const slimeDragWindowXRef = useRef<number | null>(null);
+  const slimeDragPollTimerRef = useRef<number | null>(null);
   const windowPosRef = useRef({ x: 0, y: 0 });
   const windowScaleRef = useRef(1);
   const swallowHotRef = useRef(false);
@@ -158,9 +163,12 @@ function App() {
   const [chatSending, setChatSending] = useState(false);
   const [swallowEnabled, setSwallowEnabled] = useState(initialSettingsRef.current.swallowEnabled);
   const [styleId, setStyleId] = useState(initialSettingsRef.current.styleId);
+  const [hatchPetStyles, setHatchPetStyles] = useState<StyleProfile[]>([]);
+  const [hatchPetInstalling, setHatchPetInstalling] = useState(false);
   const [stylePrompts, setStylePrompts] = useState<Record<string, string>>(initialSettingsRef.current.stylePrompts);
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(initialSettingsRef.current.llm);
   const [draggedPaths, setDraggedPaths] = useState<string[]>([]);
+  const [dragPetState, setDragPetState] = useState<PetState | null>(null);
   const [isSwallowHot, setIsSwallowHot] = useState(false);
   const [isSwallowing, setIsSwallowing] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
@@ -170,16 +178,84 @@ function App() {
   const [memos, setMemos] = useState<MemoItem[]>(() => loadMemos());
 
   const petState: PetState = useMemo(() => {
+    if (dragPetState) return dragPetState;
+    if (chatSending) return "processing";
     if (menuOpen || skillMenuOpen || memoPanelOpen || chatPanelOpen || settingsPanelOpen) return "active";
     return "idle";
-  }, [menuOpen, skillMenuOpen, memoPanelOpen, chatPanelOpen, settingsPanelOpen]);
+  }, [chatSending, dragPetState, menuOpen, skillMenuOpen, memoPanelOpen, chatPanelOpen, settingsPanelOpen]);
 
   const expRequired = useMemo(() => getExpRequired(progress.level), [progress.level]);
   const expPercent = Math.min((progress.exp / expRequired) * 100, 100);
   const maxMp = useMemo(() => getMaxMp(progress.level), [progress.level]);
   const mpPercent = Math.min((progress.mp / maxMp) * 100, 100);
   const isFileDragging = draggedPaths.length > 0;
-  const activeStyle = useMemo(() => getStyleProfile(styleId), [styleId]);
+  const styleProfiles = useMemo(() => [...STYLE_PROFILES, ...hatchPetStyles], [hatchPetStyles]);
+  const activeStyle = useMemo(
+    () => styleProfiles.find((styleProfile) => styleProfile.id === styleId) ?? getStyleProfile(styleId),
+    [styleId, styleProfiles],
+  );
+
+  const updateDragPetDirectionFromWindowX = (nextWindowX: number) => {
+    const previousDragX = slimeDragWindowXRef.current ?? windowPosRef.current.x;
+    const deltaX = nextWindowX - previousDragX;
+    if (Math.abs(deltaX) >= 1) {
+      setDragPetState((prev) => {
+        const next = deltaX < 0 ? "running-left" : "running-right";
+        return prev === next ? prev : next;
+      });
+    }
+    slimeDragWindowXRef.current = nextWindowX;
+  };
+
+  const stopSlimeDragDirectionPolling = () => {
+    if (slimeDragPollTimerRef.current === null) return;
+    window.clearTimeout(slimeDragPollTimerRef.current);
+    slimeDragPollTimerRef.current = null;
+  };
+
+  const startSlimeDragDirectionPolling = () => {
+    if (slimeDragPollTimerRef.current !== null) return;
+
+    const poll = async () => {
+      if (!slimePointerRef.current?.moved) {
+        stopSlimeDragDirectionPolling();
+        return;
+      }
+
+      try {
+        const position = await appWindow.outerPosition();
+        windowPosRef.current = { x: position.x, y: position.y };
+        updateDragPetDirectionFromWindowX(position.x);
+      } catch {
+        // Keep the last direction if native drag polling has a transient failure.
+      }
+
+      if (slimePointerRef.current?.moved) {
+        slimeDragPollTimerRef.current = window.setTimeout(() => {
+          void poll();
+        }, 48);
+      } else {
+        stopSlimeDragDirectionPolling();
+      }
+    };
+
+    slimeDragPollTimerRef.current = window.setTimeout(() => {
+      void poll();
+    }, 48);
+  };
+
+  useEffect(() => {
+    let disposed = false;
+    const loadPets = async () => {
+      const pets = await loadInstalledHatchPets();
+      if (disposed) return;
+      setHatchPetStyles(pets.map(createHatchPetStyleProfile));
+    };
+    void loadPets();
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   const isPositionInsideSwallowZone = (position: { x: number; y: number }) => {
     const zone = swallowZoneRef.current;
@@ -620,6 +696,9 @@ function App() {
       }
       movedUnlisten = await appWindow.onMoved(({ payload }) => {
         windowPosRef.current = { x: payload.x, y: payload.y };
+        if (slimePointerRef.current?.moved) {
+          updateDragPetDirectionFromWindowX(payload.x);
+        }
       });
       scaleUnlisten = await appWindow.onScaleChanged(({ payload }) => {
         windowScaleRef.current = payload.scaleFactor;
@@ -680,8 +759,14 @@ function App() {
     const distance = Math.hypot(deltaX, deltaY);
     if (distance < 4) return;
     pointer.moved = true;
+    slimeDragWindowXRef.current = windowPosRef.current.x;
+    setDragPetState(deltaX < 0 ? "running-left" : "running-right");
+    startSlimeDragDirectionPolling();
     void appWindow.startDragging().catch(() => {
       // Keep click path available when drag cannot start.
+      stopSlimeDragDirectionPolling();
+      slimeDragWindowXRef.current = null;
+      setDragPetState(null);
     });
   };
 
@@ -715,6 +800,9 @@ function App() {
     clearSlimePointerTracking();
     if (!pointer) return;
     slimePointerRef.current = null;
+    stopSlimeDragDirectionPolling();
+    slimeDragWindowXRef.current = null;
+    setDragPetState(null);
     if (!pointer.moved) {
       triggerSlimeClickAction();
     }
@@ -723,6 +811,7 @@ function App() {
   useEffect(() => {
     return () => {
       clearSlimePointerTracking();
+      stopSlimeDragDirectionPolling();
     };
   }, []);
 
@@ -1077,7 +1166,8 @@ function App() {
             const chatWindow = await WebviewWindow.getByLabel(CHAT_CHILD_WINDOW_LABEL);
             if (!chatWindow) return;
             await appWindow.emitTo(CHAT_CHILD_WINDOW_LABEL, "limulu:style-changed", { styleId: nextStyleId });
-            await chatWindow.setTitle(`${getStyleProfile(nextStyleId).assistantName}聊天`);
+            const nextStyle = styleProfiles.find((styleProfile) => styleProfile.id === nextStyleId) ?? getStyleProfile(nextStyleId);
+            await chatWindow.setTitle(`${nextStyle.assistantName}聊天`);
           } catch {
             // Ignore style sync failures to avoid blocking chat window actions.
           }
@@ -1158,6 +1248,49 @@ function App() {
     });
     setMenuOpen(false);
     setLastAction((prev) => (prev.includes("设置") ? "关闭设置面板" : "打开设置面板"));
+  };
+
+  const handleInstallHatchPetZip = (file: File) => {
+    if (hatchPetInstalling) return;
+    setHatchPetInstalling(true);
+    setLastAction("安装 Hatch Pet");
+    setToastText("正在安装 Hatch Pet...");
+
+    void (async () => {
+      try {
+        const installedPet = await installHatchPetZip(file);
+        const installedStyle = createHatchPetStyleProfile(installedPet);
+        setHatchPetStyles((prev) =>
+          [installedStyle, ...prev.filter((styleProfile) => styleProfile.id !== installedStyle.id)].sort((a, b) =>
+            a.label.toLowerCase().localeCompare(b.label.toLowerCase()),
+          ),
+        );
+        setStyleId(installedStyle.id);
+        setLlmConfig((prev) =>
+          normalizeLlmConfig({
+            ...prev,
+            systemPrompt: stylePrompts[installedStyle.id] || installedStyle.defaultSystemPrompt,
+          }),
+        );
+        try {
+          const chatWindow = await WebviewWindow.getByLabel(CHAT_CHILD_WINDOW_LABEL);
+          if (chatWindow) {
+            await appWindow.emitTo(CHAT_CHILD_WINDOW_LABEL, "limulu:style-changed", { styleId: installedStyle.id });
+            await chatWindow.setTitle(`${installedStyle.assistantName}聊天`);
+          }
+        } catch {
+          // Ignore if the chat window is not open.
+        }
+        setToastText(`已安装 ${installedPet.displayName}`);
+        setLastAction(`安装 Hatch Pet：${installedPet.displayName}`);
+      } catch (error) {
+        const detail = error instanceof Error && error.message ? error.message : String(error);
+        setToastText(`安装失败：${detail}`);
+        setLastAction("安装 Hatch Pet 失败");
+      } finally {
+        setHatchPetInstalling(false);
+      }
+    })();
   };
 
   const handleChatHeaderMouseDown = (event: React.MouseEvent<HTMLElement>) => {
@@ -1397,6 +1530,7 @@ function App() {
       isSending={chatSending}
       assistantName={activeStyle.assistantName}
       thinkingGif={activeStyle.thinkingGif}
+      hatchPet={activeStyle.hatchPet}
       onInputChange={setChatInput}
       onSend={handleSendChat}
       onClearContext={handleClearChatContext}
@@ -1422,7 +1556,7 @@ function App() {
           return next;
         });
       }}
-      styleOptions={STYLE_PROFILES.map((styleProfile) => ({
+      styleOptions={styleProfiles.map((styleProfile) => ({
         id: styleProfile.id,
         label: styleProfile.label,
       }))}
@@ -1430,7 +1564,8 @@ function App() {
       onStyleChange={(nextStyleId: string) => {
         const normalizedCurrentStyleId = normalizeStyleId(styleId);
         const normalizedNextStyleId = normalizeStyleId(nextStyleId);
-        const nextStyle = getStyleProfile(nextStyleId);
+        const nextStyle = styleProfiles.find((styleProfile) => styleProfile.id === normalizedNextStyleId) ?? getStyleProfile(nextStyleId);
+        const nextSystemPrompt = stylePrompts[normalizedNextStyleId] || nextStyle.defaultSystemPrompt;
         setStylePrompts((prev) => {
           if (prev[normalizedCurrentStyleId] === llmConfig.systemPrompt) return prev;
           return {
@@ -1452,10 +1587,12 @@ function App() {
         setLlmConfig((prev) =>
           normalizeLlmConfig({
             ...prev,
-            systemPrompt: resolveSystemPromptForStyle(normalizedNextStyleId, stylePrompts),
+            systemPrompt: nextSystemPrompt,
           }),
         );
       }}
+      hatchPetInstalling={hatchPetInstalling}
+      onInstallHatchPetZip={handleInstallHatchPetZip}
       llmConfig={llmConfig}
       onUpdateLlmConfig={(patch) => {
         if (typeof patch.systemPrompt === "string") {
@@ -1541,7 +1678,16 @@ function App() {
             aria-label={`${activeStyle.assistantName}主按钮`}
             ref={slimeRef}
           >
-            <img src={activeStyle.mainImage} className="slime-image" alt={`${activeStyle.assistantName}形态`} />
+            {activeStyle.hatchPet ? (
+              <HatchPetSprite
+                state={petState}
+                config={activeStyle.hatchPet}
+                className="slime-image hatch-pet-sprite"
+                ariaLabel={`${activeStyle.assistantName}形态`}
+              />
+            ) : (
+              <img src={activeStyle.mainImage} className="slime-image" alt={`${activeStyle.assistantName}形态`} />
+            )}
           </button>
           {activeSkillEffect && (
             <div

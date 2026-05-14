@@ -3,9 +3,12 @@ import { miemieNightStyle } from "./miemieNight";
 import { patrickPinkStyle } from "./patrickPink";
 import { rimuruBlueStyle } from "./rimuruBlue";
 import { spongebobYellowStyle } from "./spongebobYellow";
+import { isHatchPetStyleId } from "./hatchPet";
 import type { StyleProfile } from "./template";
 
-export type { StyleProfile, StyleTokens } from "./template";
+export { createHatchPetStyleProfile, getHatchPetStyleId, isHatchPetStyleId, HATCH_PET_STYLE_PREFIX } from "./hatchPet";
+export type { InstalledHatchPet } from "./hatchPet";
+export type { HatchPetConfig, StyleProfile, StyleTokens } from "./template";
 
 export const DEFAULT_STYLE_ID = "rimuru";
 
@@ -26,5 +29,6 @@ export const getStyleProfile = (styleId: string | undefined | null): StyleProfil
 
 export const normalizeStyleId = (styleId: string | undefined | null): string => {
   if (!styleId) return DEFAULT_STYLE_ID;
+  if (isHatchPetStyleId(styleId)) return styleId;
   return STYLE_MAP.has(styleId) ? styleId : DEFAULT_STYLE_ID;
 };
