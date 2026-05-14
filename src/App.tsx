@@ -130,6 +130,13 @@ function App() {
   const slimeUpListenerRef = useRef<((event: MouseEvent) => void) | null>(null);
   const slimeDragWindowXRef = useRef<number | null>(null);
   const slimeDragPollTimerRef = useRef<number | null>(null);
+  const slimeCustomDragRef = useRef<{
+    startCursorX: number;
+    startCursorY: number;
+    startWindowX: number;
+    startWindowY: number;
+    lastCursorX: number;
+  } | null>(null);
   const windowPosRef = useRef({ x: 0, y: 0 });
   const windowScaleRef = useRef(1);
   const swallowHotRef = useRef(false);
@@ -195,53 +202,62 @@ function App() {
     [styleId, styleProfiles],
   );
 
-  const updateDragPetDirectionFromWindowX = (nextWindowX: number) => {
-    const previousDragX = slimeDragWindowXRef.current ?? windowPosRef.current.x;
-    const deltaX = nextWindowX - previousDragX;
+  const updateDragPetDirectionFromDeltaX = (deltaX: number) => {
     if (Math.abs(deltaX) >= 1) {
       setDragPetState((prev) => {
         const next = deltaX < 0 ? "running-left" : "running-right";
         return prev === next ? prev : next;
       });
     }
+  };
+
+  const updateDragPetDirectionFromWindowX = (nextWindowX: number) => {
+    const previousDragX = slimeDragWindowXRef.current ?? windowPosRef.current.x;
+    updateDragPetDirectionFromDeltaX(nextWindowX - previousDragX);
     slimeDragWindowXRef.current = nextWindowX;
   };
 
-  const stopSlimeDragDirectionPolling = () => {
+  const stopSlimeCustomDragging = () => {
     if (slimeDragPollTimerRef.current === null) return;
     window.clearTimeout(slimeDragPollTimerRef.current);
     slimeDragPollTimerRef.current = null;
+    slimeCustomDragRef.current = null;
   };
 
-  const startSlimeDragDirectionPolling = () => {
+  const startSlimeCustomDragging = () => {
     if (slimeDragPollTimerRef.current !== null) return;
 
     const poll = async () => {
-      if (!slimePointerRef.current?.moved) {
-        stopSlimeDragDirectionPolling();
+      const drag = slimeCustomDragRef.current;
+      if (!drag || !slimePointerRef.current?.moved) {
+        stopSlimeCustomDragging();
         return;
       }
 
       try {
-        const position = await appWindow.outerPosition();
-        windowPosRef.current = { x: position.x, y: position.y };
-        updateDragPetDirectionFromWindowX(position.x);
+        const cursor = await cursorPosition();
+        const nextWindowX = Math.round(drag.startWindowX + cursor.x - drag.startCursorX);
+        const nextWindowY = Math.round(drag.startWindowY + cursor.y - drag.startCursorY);
+        updateDragPetDirectionFromDeltaX(cursor.x - drag.lastCursorX);
+        drag.lastCursorX = cursor.x;
+        windowPosRef.current = { x: nextWindowX, y: nextWindowY };
+        await appWindow.setPosition(new PhysicalPosition(nextWindowX, nextWindowY));
       } catch {
-        // Keep the last direction if native drag polling has a transient failure.
+        // Keep the last frame alive if a platform cursor/window call has a transient miss.
       }
 
       if (slimePointerRef.current?.moved) {
         slimeDragPollTimerRef.current = window.setTimeout(() => {
           void poll();
-        }, 48);
+        }, 16);
       } else {
-        stopSlimeDragDirectionPolling();
+        stopSlimeCustomDragging();
       }
     };
 
     slimeDragPollTimerRef.current = window.setTimeout(() => {
       void poll();
-    }, 48);
+    }, 16);
   };
 
   useEffect(() => {
@@ -761,10 +777,35 @@ function App() {
     pointer.moved = true;
     slimeDragWindowXRef.current = windowPosRef.current.x;
     setDragPetState(deltaX < 0 ? "running-left" : "running-right");
-    startSlimeDragDirectionPolling();
+    if (activeStyle.hatchPet) {
+      void (async () => {
+        try {
+          const [cursor, position] = await Promise.all([cursorPosition(), appWindow.outerPosition()]);
+          if (!slimePointerRef.current?.moved) return;
+          windowPosRef.current = { x: position.x, y: position.y };
+          slimeDragWindowXRef.current = position.x;
+          slimeCustomDragRef.current = {
+            startCursorX: cursor.x,
+            startCursorY: cursor.y,
+            startWindowX: position.x,
+            startWindowY: position.y,
+            lastCursorX: cursor.x,
+          };
+          startSlimeCustomDragging();
+        } catch {
+          clearSlimePointerTracking();
+          stopSlimeCustomDragging();
+          slimePointerRef.current = null;
+          slimeDragWindowXRef.current = null;
+          setDragPetState(null);
+        }
+      })();
+      return;
+    }
+
     void appWindow.startDragging().catch(() => {
       // Keep click path available when drag cannot start.
-      stopSlimeDragDirectionPolling();
+      stopSlimeCustomDragging();
       slimeDragWindowXRef.current = null;
       setDragPetState(null);
     });
@@ -795,12 +836,19 @@ function App() {
     tryStartSlimeDragging(event.clientX, event.clientY);
   };
 
+  const handleSlimeMouseLeave = () => {
+    const pointer = slimePointerRef.current;
+    if (!pointer) return;
+    if (pointer.moved && activeStyle.hatchPet) return;
+    handleSlimeMouseUp();
+  };
+
   const handleSlimeMouseUp = () => {
     const pointer = slimePointerRef.current;
     clearSlimePointerTracking();
     if (!pointer) return;
     slimePointerRef.current = null;
-    stopSlimeDragDirectionPolling();
+    stopSlimeCustomDragging();
     slimeDragWindowXRef.current = null;
     setDragPetState(null);
     if (!pointer.moved) {
@@ -811,7 +859,7 @@ function App() {
   useEffect(() => {
     return () => {
       clearSlimePointerTracking();
-      stopSlimeDragDirectionPolling();
+      stopSlimeCustomDragging();
     };
   }, []);
 
@@ -1673,7 +1721,7 @@ function App() {
             onMouseDown={handleSlimeMouseDown}
             onMouseMove={handleSlimeMouseMove}
             onMouseUp={handleSlimeMouseUp}
-            onMouseLeave={handleSlimeMouseUp}
+            onMouseLeave={handleSlimeMouseLeave}
             onClick={(event) => event.preventDefault()}
             aria-label={`${activeStyle.assistantName}主按钮`}
             ref={slimeRef}
